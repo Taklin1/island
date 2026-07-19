@@ -94,20 +94,24 @@ public enum TranscriptReader {
 
     /// Extracts the current session title (issue #32) from the transcript.
     ///
-    /// Claude Code writes the title on its own JSONL line
-    /// (`{"type":"ai-title","aiTitle":"…"}`) inside a metadata cluster it emits
-    /// around prompt boundaries, re-emitting it as the conversation grows;
-    /// `/rename` makes a later cluster carry the new value. Walking the tail
-    /// backwards and returning the first `ai-title` found therefore yields the
-    /// *current* title, reflecting a rename.
+    /// Claude Code writes titles on their own JSONL lines, and the two kinds are
+    /// *distinct record types* (verified against real transcripts):
+    /// - a manual `/rename` writes `{"type":"custom-title","customTitle":"…"}`;
+    /// - the auto-generated title is `{"type":"ai-title","aiTitle":"…"}`, which
+    ///   Claude Code re-emits as the conversation grows but *never* updates on a
+    ///   `/rename` — it stays frozen on the first auto value.
+    ///
+    /// So the resolution is: the **last `custom-title` wins whenever one exists**
+    /// (a manual rename always takes precedence, even though frozen `ai-title`
+    /// re-emissions keep appearing after it in the file); otherwise the **last
+    /// `ai-title`**; otherwise `nil` (the caller falls back to the folder name).
     ///
     /// Reads the same generous tail as ``summary(ofTranscriptAt:)`` (4 MB): the
-    /// last title cluster can sit far from EOF when a single turn produced a lot
-    /// of output, and a too-small cap silently missed it (the bug behind #32's
-    /// first fix). A cheap substring pre-filter keeps the scan fast even on the
-    /// full tail — only the handful of `ai-title` lines are ever JSON-decoded.
-    /// Defensive like the summary: a missing/unreadable/titleless transcript
-    /// returns `nil` and the caller falls back to the project folder name.
+    /// last title record can sit far from EOF when a single turn produced a lot
+    /// of output, and a too-small cap silently misses it. A cheap substring
+    /// pre-filter keeps the scan fast — only the handful of title lines are ever
+    /// JSON-decoded. Defensive like the summary: a missing/unreadable/titleless
+    /// transcript returns `nil`.
     ///
     /// - Returns: the current title, or `nil` when none is present in the tail.
     public static func title(
@@ -116,15 +120,32 @@ public enum TranscriptReader {
     ) -> String? {
         guard let lines = tailLines(of: url, maxBytes: maxTailBytes) else { return nil }
 
+        var latestAutoTitle: String?
+        // Walk backwards: the first custom-title met is the most recent manual
+        // /rename and wins outright; otherwise keep the most recent ai-title as
+        // the fallback (the frozen auto title).
         for raw in lines.reversed() {
-            guard raw.range(of: "ai-title") != nil,
-                let line = TranscriptLine(jsonLine: raw), line.type == "ai-title" else {
-                continue
+            guard raw.range(of: "-title") != nil,
+                let line = TranscriptLine(jsonLine: raw)
+            else { continue }
+
+            switch line.type {
+            case "custom-title":
+                if let title = line.customTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !title.isEmpty {
+                    return title
+                }
+            case "ai-title":
+                if latestAutoTitle == nil,
+                    let title = line.aiTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !title.isEmpty {
+                    latestAutoTitle = title
+                }
+            default:
+                break
             }
-            let title = line.aiTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let title, !title.isEmpty { return title }
         }
-        return nil
+        return latestAutoTitle
     }
 
     /// Tool names whose `file_path`-shaped input means "this file changed".
@@ -197,8 +218,10 @@ struct TranscriptLine: Decodable {
     let isSidechain: Bool?
     let isMeta: Bool?
     let timestamp: String?
-    /// Session title carried by `type: "ai-title"` lines (issue #32).
+    /// Auto-generated title, carried by `type: "ai-title"` lines (issue #32).
     let aiTitle: String?
+    /// Manual `/rename` title, carried by `type: "custom-title"` lines (#32).
+    let customTitle: String?
     let message: Message?
 
     init?(jsonLine: Substring) {

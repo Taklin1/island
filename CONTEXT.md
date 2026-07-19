@@ -46,7 +46,7 @@ Action utilisateur qui éteint le Liseré et le Peek associés à une Session : 
 Ce que l'Island affiche d'un tour terminé : extrait local du transcript (dernier message assistant, todos, fichiers modifiés). Jamais généré par un appel LLM.
 
 **Titre de session** :
-Le titre Claude Code d'une Session, affiché en haut de sa carte Étendue (le chemin du projet en dessous). Extrait localement du transcript (enregistrement `ai-title`, le dernier gagne), jamais généré par un appel LLM ; reflète `/rename`. Repli sur le nom du dossier tant qu'aucun titre n'existe. Relu à chaque Événement et à l'ouverture Étendue — `/rename` n'émet pas de hook, donc un titre changé sur une Session au repos n'apparaît qu'au survol.
+Le titre Claude Code d'une Session, affiché en haut de sa carte Étendue (le chemin du projet en dessous). Extrait localement du transcript, jamais généré par un appel LLM. Deux enregistrements JSONL DISTINCTS (vérifié sur de vrais transcripts) : `custom-title` (champ `customTitle`) = renommage manuel via `/rename`, qui PRIME toujours ; `ai-title` (champ `aiTitle`) = titre auto-généré, jamais modifié par un `/rename`. Résolution : dernier `custom-title` sinon dernier `ai-title` sinon repli sur le nom du dossier. Relu à chaque Événement et à l'ouverture Étendue — `/rename` n'émet pas de hook, donc un renommage sur une Session au repos n'apparaît qu'au survol. (NB : l'énoncé initial de l'issue #32 — « `/rename` écrit un nouvel `ai-title` » — était faux ; c'est un `custom-title`.)
 _Avoid_ : nom de session, label
 
 **Quotas** :

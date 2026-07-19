@@ -135,10 +135,12 @@ struct LocalServerTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // One transcript file per Session (the file name is the session id).
-        func writeTranscript(_ id: String, titles: [String]) throws -> URL {
+        // The auto title is an `ai-title`; a manual /rename is a `custom-title`.
+        func writeTranscript(_ id: String, auto: String, custom: String? = nil) throws -> URL {
             let url = dir.appendingPathComponent("\(id).jsonl")
-            let lines = titles.map {
-                #"{"type":"ai-title","aiTitle":"\#($0)","sessionId":"\#(id)"}"#
+            var lines = [#"{"type":"ai-title","aiTitle":"\#(auto)","sessionId":"\#(id)"}"#]
+            if let custom {
+                lines.append(#"{"type":"custom-title","customTitle":"\#(custom)","sessionId":"\#(id)"}"#)
             }
             try Data(lines.joined(separator: "\n").utf8).write(to: url)
             return url
@@ -155,8 +157,8 @@ struct LocalServerTests {
         }
 
         // Two Sessions in the SAME project (same cwd) but distinct titles.
-        let t1 = try writeTranscript("s1", titles: ["Fix the parser crash"])
-        let t2 = try writeTranscript("s2", titles: ["Ship the release"])
+        let t1 = try writeTranscript("s1", auto: "Fix the parser crash")
+        let t2 = try writeTranscript("s2", auto: "Ship the release")
         _ = try await harness.postHook(hook("s1", "UserPromptSubmit", transcript: t1, extra: #", "prompt": "Go""#), token: harness.token)
         _ = try await harness.postHook(hook("s2", "UserPromptSubmit", transcript: t2, extra: #", "prompt": "Go""#), token: harness.token)
 
@@ -168,9 +170,9 @@ struct LocalServerTests {
         #expect(byID["s1"]?.title == "Fix the parser crash")
         #expect(byID["s2"]?.title == "Ship the release")
 
-        // A /rename appends a fresh ai-title; the next event of any kind picks
-        // it up (no rename-specific hook needed).
-        _ = try writeTranscript("s1", titles: ["Fix the parser crash", "Renamed after /rename"])
+        // A /rename writes a custom-title (the auto title stays); the next event
+        // of any kind picks it up, and the manual rename wins.
+        _ = try writeTranscript("s1", auto: "Fix the parser crash", custom: "Renamed after /rename")
         _ = try await harness.postHook(hook("s1", "PreToolUse", transcript: t1, extra: #", "tool_name": "Bash""#), token: harness.token)
 
         try await harness.waitUntil { $0.sessions.first { $0.id == "s1" }?.title == "Renamed after /rename" }
