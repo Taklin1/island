@@ -229,4 +229,152 @@ struct SessionStoreTests {
         #expect(store.sessions.first?.lastSummary == nil)
         #expect(store.sessions.first?.state == .ended)
     }
+
+    // MARK: - Subagents and real-time state fidelity (issue #31)
+
+    @Test("A Stop while a subagent is still running keeps the Session running, not ended")
+    func stopWithActiveSubagentStaysRunning() {
+        let store = SessionStore()
+        func apply(_ kind: AgentEventKind) {
+            store.apply(AgentEvent(sessionID: "abc123", kind: kind, cwd: "/tmp/demo", agent: "claude-code"))
+        }
+
+        apply(.promptSubmitted(prompt: "Explore the repo"))
+        apply(.subagentStarted)
+        #expect(store.sessions[0].state == .running)
+        #expect(store.sessions[0].activeSubagentCount == 1)
+
+        // The main turn's Stop fires while the subagent is still working.
+        apply(.turnEnded)
+        #expect(store.sessions[0].state == .running) // never "terminée" (#31)
+        #expect(store.sessions[0].needsAcknowledgement == false)
+    }
+
+    @Test("The last SubagentStop, arriving AFTER the main Stop, finishes the turn")
+    func lastSubagentStopAfterMainStopEndsTurn() {
+        let store = SessionStore()
+        let summary = TurnSummary(text: "Explored.")
+        func apply(_ kind: AgentEventKind, summary: TurnSummary? = nil) {
+            store.apply(AgentEvent(
+                sessionID: "abc123", kind: kind, cwd: "/tmp/demo",
+                agent: "claude-code", summary: summary))
+        }
+
+        apply(.promptSubmitted(prompt: "Explore"))
+        apply(.subagentStarted)
+        apply(.turnEnded, summary: summary) // Stop arrives before the subagent stops
+        #expect(store.sessions[0].state == .running)
+        #expect(store.sessions[0].needsAcknowledgement == false)
+
+        apply(.subagentStopped) // last subagent gone → only now ended
+        #expect(store.sessions[0].state == .ended)
+        #expect(store.sessions[0].needsAcknowledgement)
+        #expect(store.sessions[0].lastSummary == summary)
+        #expect(store.sessions[0].activeSubagentCount == 0)
+    }
+
+    @Test("Several subagents: ended only once the last one stops")
+    func endedOnlyAfterEverySubagentStops() {
+        let store = SessionStore()
+        func apply(_ kind: AgentEventKind) {
+            store.apply(AgentEvent(sessionID: "abc123", kind: kind, agent: "claude-code"))
+        }
+
+        apply(.promptSubmitted(prompt: "Go"))
+        apply(.subagentStarted)
+        apply(.subagentStarted)
+        apply(.turnEnded)
+        #expect(store.sessions[0].state == .running)
+
+        apply(.subagentStopped)
+        #expect(store.sessions[0].state == .running) // one still running
+        apply(.subagentStopped)
+        #expect(store.sessions[0].state == .ended) // last one gone
+    }
+
+    @Test("A subagent that finishes before the main Stop: the turn ends as usual")
+    func subagentFinishingBeforeStopEndsNormally() {
+        let store = SessionStore()
+        func apply(_ kind: AgentEventKind) {
+            store.apply(AgentEvent(sessionID: "abc123", kind: kind, agent: "claude-code"))
+        }
+
+        apply(.promptSubmitted(prompt: "Go"))
+        apply(.subagentStarted)
+        apply(.subagentStopped) // subagent done before the main Stop
+        #expect(store.sessions[0].state == .running) // main turn still going
+        apply(.turnEnded)
+        #expect(store.sessions[0].state == .ended) // no subagent left → ended
+    }
+
+    @Test("Subagent events for an unknown Session create no Session")
+    func subagentEventsNeverCreateASession() {
+        let store = SessionStore()
+
+        store.apply(AgentEvent(sessionID: "ghost", kind: .subagentStopped, agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "ghost", kind: .subagentStarted, agent: "claude-code"))
+
+        #expect(store.sessions.isEmpty)
+    }
+
+    @Test("A blocking notification never resurrects a turn that already ended (root cause B)")
+    func waitingNeverResurrectsEndedTurn() {
+        let store = SessionStore()
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded, agent: "claude-code"))
+        #expect(store.sessions[0].state == .ended)
+
+        // A stray notification reaching the store must not turn "terminé" into "?".
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .waitingForUser(message: nil), agent: "claude-code"))
+
+        #expect(store.sessions[0].state == .ended)
+    }
+
+    @Test("A real block waits from running, even with a subagent in flight")
+    func realBlockWaitsFromRunning() {
+        let store = SessionStore()
+        func apply(_ kind: AgentEventKind) {
+            store.apply(AgentEvent(sessionID: "abc123", kind: kind, agent: "claude-code"))
+        }
+
+        apply(.promptSubmitted(prompt: "Go"))
+        apply(.subagentStarted)
+        apply(.waitingForUser(message: "May I?"))
+
+        #expect(store.sessions[0].state == .waiting)
+        #expect(store.sessions[0].needsAcknowledgement)
+    }
+
+    @Test("A finished turn clears a pending '?' (waiting → ended)")
+    func turnEndClearsWaiting() {
+        let store = SessionStore()
+        func apply(_ kind: AgentEventKind) {
+            store.apply(AgentEvent(sessionID: "abc123", kind: kind, agent: "claude-code"))
+        }
+
+        apply(.promptSubmitted(prompt: "Go"))
+        apply(.waitingForUser(message: "May I?"))
+        #expect(store.sessions[0].state == .waiting)
+
+        apply(.turnEnded)
+        #expect(store.sessions[0].state == .ended) // the turn end clears the "?"
+    }
+
+    @Test("A real block during subagent wrap-up survives the last SubagentStop")
+    func blockDuringWrapUpSurvivesLastSubagentStop() {
+        let store = SessionStore()
+        func apply(_ kind: AgentEventKind) {
+            store.apply(AgentEvent(sessionID: "abc123", kind: kind, agent: "claude-code"))
+        }
+
+        apply(.promptSubmitted(prompt: "Go"))
+        apply(.subagentStarted)
+        apply(.turnEnded) // main Stop, subagent still running → running
+        apply(.waitingForUser(message: "May I?")) // a genuine block appears
+        #expect(store.sessions[0].state == .waiting)
+
+        // The last subagent stops: finalization must NOT wipe the "?".
+        apply(.subagentStopped)
+        #expect(store.sessions[0].state == .waiting)
+    }
 }

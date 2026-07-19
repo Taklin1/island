@@ -81,6 +81,13 @@ public enum AgentEventKind: Equatable, Sendable {
     case toolFinished(tool: String)
     /// The agent finished its turn (the Session stays alive, idle).
     case turnEnded
+    /// A subagent started under this Session. Subagents never create their own
+    /// Session; they only bump the parent's active-subagent count (issue #31).
+    case subagentStarted
+    /// A subagent finished. The Session becomes ended only once the last
+    /// subagent stops *and* the main turn has ended — a SubagentStop can arrive
+    /// after the main Stop (issue #31).
+    case subagentStopped
     /// The agent is blocked on the user (permission request or question).
     case waitingForUser(message: String?)
     /// The Session closed for good: it disappears from the Island.

@@ -26,6 +26,13 @@ public struct Session: Identifiable, Equatable, Sendable {
     /// True while a marking event (waiting / turn ended) has not been
     /// Acknowledged by the user. Drives the Liseré.
     public var needsAcknowledgement: Bool
+    /// Subagents currently running under this Session (issue #31). A Session
+    /// with a live subagent is never shown "terminée": its turn is not done.
+    public var activeSubagentCount: Int
+    /// Whether the main turn's Stop hook has fired for the current turn. The
+    /// Session only becomes `.ended` once this is true *and* no subagent is
+    /// still running — a SubagentStop can arrive after the main Stop (#31).
+    public var mainTurnFinished: Bool
 
     /// Human-readable project name: last path component of the cwd.
     public var projectName: String {
@@ -44,7 +51,9 @@ public struct Session: Identifiable, Equatable, Sendable {
         turnStartedAt: Date? = nil,
         lastSummary: TurnSummary? = nil,
         lastActivityAt: Date = Date(),
-        needsAcknowledgement: Bool = false
+        needsAcknowledgement: Bool = false,
+        activeSubagentCount: Int = 0,
+        mainTurnFinished: Bool = false
     ) {
         self.id = id
         self.state = state
@@ -57,6 +66,8 @@ public struct Session: Identifiable, Equatable, Sendable {
         self.lastSummary = lastSummary
         self.lastActivityAt = lastActivityAt
         self.needsAcknowledgement = needsAcknowledgement
+        self.activeSubagentCount = activeSubagentCount
+        self.mainTurnFinished = mainTurnFinished
     }
 }
 
@@ -118,7 +129,15 @@ public final class SessionStore: ObservableObject {
             return
         }
 
-        var session = sessions.first(where: { $0.id == event.sessionID })
+        let existing = sessions.first(where: { $0.id == event.sessionID })
+        // Subagent bookkeeping targets the PARENT Session and never creates one
+        // (#31): a subagent event for a Session we don't track is dropped.
+        if existing == nil,
+            event.kind == .subagentStarted || event.kind == .subagentStopped {
+            return
+        }
+
+        var session = existing
             ?? Session(
                 id: event.sessionID,
                 state: .idle,
@@ -147,6 +166,9 @@ public final class SessionStore: ObservableObject {
             session.turnStartedAt = timestamp
             session.needsAcknowledgement = false
             session.lastSummary = nil
+            // A new prompt is a fresh turn: the previous main Stop no longer
+            // counts against the subagents still being tracked (#31).
+            session.mainTurnFinished = false
         case let .toolStarted(tool):
             session.state = .running
             session.currentTool = tool
@@ -157,14 +179,51 @@ public final class SessionStore: ObservableObject {
         case .toolFinished:
             session.currentTool = nil
         case .turnEnded:
-            session.state = .ended
+            // The main turn's Stop fired. But it is only "terminée" once every
+            // subagent has stopped too — a Stop with subagents in flight keeps
+            // the Session "en cours" (root cause C, #31).
             session.currentTool = nil
-            session.turnStartedAt = nil
-            session.needsAcknowledgement = true
             session.lastSummary = event.summary
+            session.mainTurnFinished = true
+            if session.activeSubagentCount > 0 {
+                session.state = .running
+            } else {
+                session.state = .ended
+                session.turnStartedAt = nil
+                session.needsAcknowledgement = true
+            }
+        case .subagentStarted:
+            // Subagents never create a Session (guarded above); they bump the
+            // parent's count and keep it working, never "terminée" (#31).
+            session.activeSubagentCount += 1
+            if session.state == .idle || session.state == .ended {
+                session.state = .running
+                session.needsAcknowledgement = false
+                session.mainTurnFinished = false
+            }
+        case .subagentStopped:
+            session.activeSubagentCount = max(0, session.activeSubagentCount - 1)
+            if session.activeSubagentCount == 0,
+                session.mainTurnFinished,
+                session.state == .running {
+                // Last subagent gone and the main turn already ended: only now
+                // is the turn truly finished — this Stop may arrive after the
+                // main one (#31). Guarded to `.running` so it never clobbers a
+                // genuine block ("?") that appeared during the wrap-up.
+                session.state = .ended
+                session.currentTool = nil
+                session.turnStartedAt = nil
+                session.needsAcknowledgement = true
+            }
         case .waitingForUser:
-            session.state = .waiting
-            session.needsAcknowledgement = true
+            // Root cause B (#31): a genuine block moves the Session to waiting
+            // from any live state, but never resurrects a turn that already
+            // ended — a real permission/question never follows a finished turn,
+            // so a stray notification must not turn a "terminé" back into "?".
+            if session.state != .ended {
+                session.state = .waiting
+                session.needsAcknowledgement = true
+            }
         }
 
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {

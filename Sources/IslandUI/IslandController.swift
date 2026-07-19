@@ -263,6 +263,11 @@ public final class IslandController {
                 if let tool = session.currentTool {
                     parts += "(\(tool))"
                 }
+                // Active subagents (#31): a Session with one is never terminée —
+                // surfaced here so agentic tests can assert it from stdout.
+                if session.activeSubagentCount > 0 {
+                    parts += "×\(session.activeSubagentCount)sub"
+                }
                 if session.lastSummary != nil {
                     parts += "+summary"
                 }
