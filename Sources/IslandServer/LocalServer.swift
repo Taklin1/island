@@ -16,6 +16,11 @@ public final class LocalServer: @unchecked Sendable {
     public typealias Translator = @Sendable (Data) -> AgentEvent?
     /// Hands a translated event over to the rest of the app. Must not block.
     public typealias Publisher = @Sendable (AgentEvent) -> Void
+    /// Turns a raw statusline payload into a quota update (`nil` = unreadable
+    /// payload, silently ignored — the statusline is never disturbed).
+    public typealias StatuslineTranslator = @Sendable (Data) -> QuotaUpdate?
+    /// Hands a quota update over to the rest of the app. Must not block.
+    public typealias QuotaPublisher = @Sendable (QuotaUpdate) -> Void
 
     /// Fixed production port. Tests pass 0 for an ephemeral port.
     public static let defaultPort: UInt16 = 41414
@@ -27,18 +32,24 @@ public final class LocalServer: @unchecked Sendable {
     private let token: String
     private let translate: Translator
     private let publish: Publisher
+    private let translateStatusline: StatuslineTranslator?
+    private let publishQuota: QuotaPublisher?
     private var listener: NWListener?
 
     public init(
         port: UInt16 = LocalServer.defaultPort,
         token: String,
         translate: @escaping Translator,
-        publish: @escaping Publisher
+        publish: @escaping Publisher,
+        translateStatusline: StatuslineTranslator? = nil,
+        publishQuota: QuotaPublisher? = nil
     ) {
         self.requestedPort = port
         self.token = token
         self.translate = translate
         self.publish = publish
+        self.translateStatusline = translateStatusline
+        self.publishQuota = publishQuota
     }
 
     /// Starts listening; returns the resolved port once ready.
@@ -128,6 +139,15 @@ public final class LocalServer: @unchecked Sendable {
             // Claude Code is never disturbed.
             if let event = translate(request.body) {
                 publish(event)
+            }
+            (status, body) = ((200, "OK"), #"{"ok":true}"#)
+        } else if request.method == "POST", request.path == "/statusline/claude-code",
+            let translateStatusline, let publishQuota
+        {
+            // Same contract as the hooks: answer immediately, ignore
+            // unreadable payloads — the statusline is never disturbed.
+            if let update = translateStatusline(request.body) {
+                publishQuota(update)
             }
             (status, body) = ((200, "OK"), #"{"ok":true}"#)
         } else {

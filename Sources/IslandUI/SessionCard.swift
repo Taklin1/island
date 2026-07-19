@@ -18,8 +18,17 @@ struct SessionCard: Identifiable, Equatable {
     /// Start of the current turn, when the Session is working (drives the
     /// live elapsed-time display).
     let turnStartedAt: Date?
+    /// Context window usage of this Session (0–100), when the statusline tee
+    /// reported one (issue #9). nil = not shown.
+    let contextUsedPercentage: Double?
 
-    init(session: Session, home: String = NSHomeDirectory()) {
+    /// French context label of the card's Quotas section, or nil when the
+    /// tee never reported a context usage for this Session.
+    var contextLabel: String? {
+        contextUsedPercentage.map { "contexte \(Int($0.rounded())) %" }
+    }
+
+    init(session: Session, contextUsedPercentage: Double? = nil, home: String = NSHomeDirectory()) {
         id = session.id
         project = session.projectName
         if let cwd = session.cwd, !cwd.isEmpty {
@@ -28,6 +37,7 @@ struct SessionCard: Identifiable, Equatable {
             location = nil
         }
         (stateLabel, glyph) = Self.presentation(of: session.state)
+        self.contextUsedPercentage = contextUsedPercentage
         lastPrompt = session.lastPrompt
         currentTool = session.currentTool
         turnStartedAt = session.turnStartedAt
