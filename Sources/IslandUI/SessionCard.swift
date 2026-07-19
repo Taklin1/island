@@ -11,8 +11,9 @@ struct SessionCard: Identifiable, Equatable {
     let location: String?
     /// French state label shown on the card.
     let stateLabel: String
-    /// Compact-mode glyph for the same state.
-    let glyph: String
+    /// Pixel-art glyph animation of the state (issue #11): the bot screen's
+    /// glyph alone, 2×, shown in front of the project name.
+    let animation: SpriteAnimation
     let lastPrompt: String?
     let currentTool: String?
     /// Start of the current turn, when the Session is working (drives the
@@ -43,7 +44,8 @@ struct SessionCard: Identifiable, Equatable {
         } else {
             location = nil
         }
-        (stateLabel, glyph) = Self.presentation(of: session.state)
+        stateLabel = Self.label(of: session.state)
+        animation = SpriteAnimation.animation(for: session.state)
         self.contextUsedPercentage = contextUsedPercentage
         lastPrompt = session.lastPrompt
         currentTool = session.currentTool
@@ -103,12 +105,12 @@ struct SessionCard: Identifiable, Equatable {
         return cut.trimmingCharacters(in: .whitespaces) + "…"
     }
 
-    static func presentation(of state: SessionState) -> (label: String, glyph: String) {
+    static func label(of state: SessionState) -> String {
         switch state {
-        case .idle: ("démarrée", "○")
-        case .running: ("en cours", "●")
-        case .ended: ("terminée", "✓")
-        case .waiting: ("attend", "?")
+        case .idle: "démarrée"
+        case .running: "en cours"
+        case .ended: "terminée"
+        case .waiting: "attend"
         }
     }
 

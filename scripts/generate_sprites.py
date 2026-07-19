@@ -113,6 +113,44 @@ def draw_bot(frame, state, f):
             frame.row(5 + 2 * r + oy, a + shake, b + shake, RED)
 
 
+# Extended-card glyphs: the bot screen's glyphs alone, drawn at 2× scale.
+# MUST mirror SpriteSheet.glyphs (same animation rows as the bot sheet).
+GLYPH_LOOPS = [("working", 4), ("sleeping", 2), ("finished", 4), ("question", 3), ("error", 2)]
+
+CROSS = ["#.#", ".#.", "#.#"]
+DOTS = ["#....", "#.#..", "#.#.#"]
+
+
+def glyph_2x(frame, rows, x0, y0, color, max_cols=99):
+    for j, line in enumerate(rows):
+        for i, ch in enumerate(line):
+            if ch == "#" and i < max_cols:
+                for dx in (0, 1):
+                    for dy in (0, 1):
+                        frame.px(x0 + 2 * i + dx, y0 + 2 * j + dy, color)
+
+
+def draw_card_glyph(frame, state, f):
+    if state == "working":
+        # Typing dots appearing one by one.
+        frame_rows = [DOTS[min(f, 2)]]
+        glyph_2x(frame, frame_rows, 3, 7, CODE)
+    elif state == "sleeping":
+        glyph_2x(frame, GLYPHS["z"], 5, 4 - f, ZGREY)
+    elif state == "finished":
+        # The check draws itself left to right, then a glint.
+        glyph_2x(frame, GLYPHS["check"], 3, 4, GREEN, max_cols=[3, 4, 5, 5][f])
+        if f == 3:
+            frame.px(14, 3, "#c9f4e4")
+    elif state == "question":
+        # Blinks like on the robot's screen; the off frame sits mid-cycle so
+        # the sheet contract (non-empty last frame) stays checkable.
+        if f != 1:
+            glyph_2x(frame, GLYPHS["q"], 5, 3, ORANGE)
+    elif state == "error":
+        glyph_2x(frame, CROSS, 5 + (1 if f % 2 else -1), 5, RED)
+
+
 # Isle palette (logo, same style as the bots — shares the code green).
 SAND = "#e8d5a9"
 SAND_SHADE = "#c9a86a"
@@ -159,6 +197,15 @@ def main():
             draw_bot(Frame(tile, 0, 0), state, f)
             bot.paste(tile, (f * SIZE, row * SIZE))
     bot.save(os.path.join(out, "bot.png"))
+
+    max_glyph_frames = max(frames for _, frames in GLYPH_LOOPS)
+    glyphs = sheet(rows=len(GLYPH_LOOPS), columns=max_glyph_frames)
+    for row, (state, frames) in enumerate(GLYPH_LOOPS):
+        for f in range(frames):
+            tile = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
+            draw_card_glyph(Frame(tile, 0, 0), state, f)
+            glyphs.paste(tile, (f * SIZE, row * SIZE))
+    glyphs.save(os.path.join(out, "glyphs.png"))
 
     isle = sheet(rows=1, columns=2)
     for f in range(2):

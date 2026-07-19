@@ -15,7 +15,7 @@ struct WaitingAndClickTests {
         )
 
         #expect(card.stateLabel == "attend")
-        #expect(card.glyph == "?")
+        #expect(card.animation == .question)
     }
 
     @Test("The compact bar tone mirrors the Sessions: orange when one waits, over green")

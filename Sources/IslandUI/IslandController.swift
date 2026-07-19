@@ -390,8 +390,9 @@ struct SessionCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Text(card.glyph)
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                // Pixel-art state glyph (issue #11): the bot screen's glyph
+                // alone, same palette and pace as the compact Sprites.
+                SpriteView(sheet: .glyphs, imageName: "glyphs", animation: card.animation)
                 Text(card.project)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)

@@ -49,6 +49,18 @@ struct SpriteTests {
         #expect(sheet.frameRect(for: .error, frame: 0) == CGRect(x: 0, y: 64, width: 16, height: 16))
     }
 
+    @Test("An Extended card carries the glyph animation of its state")
+    func cardCarriesTheGlyphAnimationOfItsState() {
+        func card(_ state: SessionState) -> SessionCard {
+            SessionCard(session: Session(id: "x", state: state, agent: "claude-code"), home: "/Users/loic")
+        }
+
+        #expect(card(.running).animation == .working)
+        #expect(card(.idle).animation == .sleeping)
+        #expect(card(.ended).animation == .finished)
+        #expect(card(.waiting).animation == .question)
+    }
+
     @Test("The compact bar shows one Sprite per Session, in order")
     func compactBarShowsOneSpritePerSession() {
         let sessions = [
@@ -76,13 +88,20 @@ struct SpriteTests {
         #expect(isle.width == SpriteSheet.isle.maxFrames * SpriteSheet.frameSize)
         #expect(isle.height == SpriteSheet.frameSize)
 
+        // Card glyphs (Extended mode): same grid contract as the bot.
+        let glyphs = try #require(SpriteSheet.glyphs.image(named: "glyphs"))
+        #expect(glyphs.width == SpriteSheet.glyphs.maxFrames * SpriteSheet.frameSize)
+        #expect(glyphs.height == SpriteAnimation.allCases.count * SpriteSheet.frameSize)
+
         // Every declared loop is actually drawn: the last frame of each
         // animation holds real pixels (a frame count drifting between the
         // descriptor and the generator would land on a transparent tile).
-        for animation in SpriteAnimation.allCases {
-            let frames = try #require(SpriteSheet.bot.loops[animation]?.frames)
-            let rect = SpriteSheet.bot.frameRect(for: animation, frame: frames - 1)
-            #expect(Self.hasVisiblePixels(in: bot, rect: rect), "empty last frame: \(animation)")
+        for (sheet, image) in [(SpriteSheet.bot, bot), (SpriteSheet.glyphs, glyphs)] {
+            for animation in SpriteAnimation.allCases {
+                let frames = try #require(sheet.loops[animation]?.frames)
+                let rect = sheet.frameRect(for: animation, frame: frames - 1)
+                #expect(Self.hasVisiblePixels(in: image, rect: rect), "empty last frame: \(animation)")
+            }
         }
     }
 

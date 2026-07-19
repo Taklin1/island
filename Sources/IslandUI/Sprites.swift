@@ -48,6 +48,17 @@ public struct SpriteSheet: Sendable {
         .error: Loop(frames: 6, fps: 7),
     ])
 
+    /// The Extended-card glyph sheet: the bot screen's glyphs alone, 2×,
+    /// one gentle loop per state (check draws itself, question blinks like
+    /// on the robot, error cross shakes, typing dots, floating z).
+    public static let glyphs = SpriteSheet(loops: [
+        .working: Loop(frames: 4, fps: 4),
+        .sleeping: Loop(frames: 2, fps: 1.5),
+        .finished: Loop(frames: 4, fps: 3),
+        .question: Loop(frames: 3, fps: 2.5),
+        .error: Loop(frames: 2, fps: 7),
+    ])
+
     /// The isle logo sheet: a single gentle loop (palms swaying), stored on
     /// the `.working` row — the isle has no Session state to encode.
     public static let isle = SpriteSheet(loops: [
