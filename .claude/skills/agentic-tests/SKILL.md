@@ -35,7 +35,9 @@ En cas d'ambiguite (sur `develop`/`main`, sans argument), demande quel mode lanc
 - L'app **tourne en local** (`swift build` puis lancee), API d'evenements a l'ecoute.
   Pas d'app qui tourne = pas d'execution.
 - Tu sais piloter l'app : POST des fixtures de hooks + lecture de l'etat des Sessions
-  ; screenshots pour le rendu SwiftUI.
+  ; screenshots pour le rendu SwiftUI. **Lis `docs/agents/agentic-driving.md`**
+  (auth `X-Island-Token`, pas `Bearer` ; hover synthetique CGEvent pour le mode
+  Etendu) avant de curl.
 
 ### Injecter les fixtures
 
