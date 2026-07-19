@@ -21,14 +21,18 @@ let package = Package(
         .target(name: "ClaudeCodeAdapter", dependencies: ["IslandStore"]),
         // Local HTTP server (127.0.0.1), token-authenticated entry point for events.
         .target(name: "IslandServer", dependencies: ["IslandStore"]),
+        // Installs/uninstalls the Claude Code hooks in ~/.claude/settings.json
+        // (additive merge, timestamped backup, idempotent — ADR-0001).
+        .target(name: "IslandInstaller"),
         // Floating Island UI (DynamicNotchKit): compact bar + peek on events.
         .target(name: "IslandUI", dependencies: ["IslandStore", "DynamicNotchKit"]),
         // App executable wiring server + adapter + store + UI.
         .executableTarget(
             name: "Island",
-            dependencies: ["IslandStore", "ClaudeCodeAdapter", "IslandServer", "IslandUI"]
+            dependencies: ["IslandStore", "ClaudeCodeAdapter", "IslandServer", "IslandUI", "IslandInstaller"]
         ),
         .testTarget(name: "IslandStoreTests", dependencies: ["IslandStore"]),
+        .testTarget(name: "IslandInstallerTests", dependencies: ["IslandInstaller"]),
         .testTarget(name: "ClaudeCodeAdapterTests", dependencies: ["ClaudeCodeAdapter"]),
         .testTarget(
             name: "IslandServerTests",

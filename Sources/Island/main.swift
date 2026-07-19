@@ -1,20 +1,27 @@
 import AppKit
 import ClaudeCodeAdapter
+import IslandInstaller
 import IslandServer
 import IslandStore
 import IslandUI
 
 /// Island executable: wires token → local server → Claude Code adapter →
-/// session store → Island UI. Runs as an accessory app (no Dock icon, never
-/// activated) so it can never steal focus from the terminal.
+/// session store → Island UI, installs the Claude Code hooks on first launch,
+/// and lives in the menu bar (preferences, hook uninstall, quit). Runs as an
+/// accessory app (no Dock icon, never activated) so it can never steal focus
+/// from the terminal.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SessionStore()
+    private let settings = AppSettings()
     private var server: LocalServer?
     private var controller: IslandController?
+    private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let store = store
+        installHooksOnFirstLaunch()
+        installMenuBarIcon()
         Task { @MainActor in
             do {
                 let token = try TokenStore.loadOrCreate()
@@ -39,6 +46,140 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApplication.shared.terminate(nil)
             }
         }
+    }
+
+    // MARK: - Hooks lifecycle (issue #6)
+
+    /// First launch only: merge the island hooks into ~/.claude/settings.json
+    /// (additive, backed up, idempotent) and register the login item. Later
+    /// launches never re-install, so uninstalling from the menu sticks.
+    private func installHooksOnFirstLaunch() {
+        guard !settings.hooksInstallAttempted else {
+            print("island: hooks install already attempted, skipping (uninstall/reinstall from the menu)")
+            return
+        }
+        settings.hooksInstallAttempted = true
+        installHooks()
+        LoginItem.setEnabled(true)
+    }
+
+    private func installHooks() {
+        do {
+            let installer = HookInstaller(settingsURL: HookInstaller.defaultSettingsURL)
+            switch try installer.install() {
+            case .installed(let backup):
+                print("island: hooks installed into ~/.claude/settings.json"
+                    + (backup.map { " (backup: \($0.path))" } ?? " (new file, no backup needed)"))
+            case .alreadyInstalled:
+                print("island: hooks already installed, nothing to do")
+            }
+        } catch {
+            fputs("island: hooks install failed: \(error)\n", stderr)
+        }
+    }
+
+    @objc private func uninstallHooks() {
+        do {
+            let installer = HookInstaller(settingsURL: HookInstaller.defaultSettingsURL)
+            switch try installer.uninstall() {
+            case .uninstalled(let backup):
+                print("island: hooks uninstalled from ~/.claude/settings.json"
+                    + (backup.map { " (backup: \($0.path))" } ?? ""))
+            case .nothingToUninstall:
+                print("island: no island hooks found, nothing to uninstall")
+            }
+        } catch {
+            fputs("island: hooks uninstall failed: \(error)\n", stderr)
+        }
+    }
+
+    @objc private func reinstallHooks() {
+        installHooks()
+    }
+
+    // MARK: - Menu bar
+
+    private func installMenuBarIcon() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = item.button {
+            button.image = NSImage(
+                systemSymbolName: "water.waves",
+                accessibilityDescription: "Island"
+            )
+            button.image?.isTemplate = true
+            if button.image == nil { button.title = "⏺" }
+        }
+        item.menu = buildMenu()
+        statusItem = item
+        print("island: menu bar icon installed")
+    }
+
+    private func buildMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let border = NSMenuItem(
+            title: "Liseré", action: #selector(toggleBorder(_:)), keyEquivalent: "")
+        border.target = self
+        border.state = settings.borderEnabled ? .on : .off
+        menu.addItem(border)
+
+        let sound = NSMenuItem(
+            title: "Son", action: #selector(toggleSound(_:)), keyEquivalent: "")
+        sound.target = self
+        sound.state = settings.soundEnabled ? .on : .off
+        menu.addItem(sound)
+
+        menu.addItem(.separator())
+
+        let login = NSMenuItem(
+            title: "Ouvrir à la connexion", action: #selector(toggleLoginItem(_:)),
+            keyEquivalent: "")
+        login.target = self
+        login.state = LoginItem.isEnabled ? .on : .off
+        menu.addItem(login)
+
+        menu.addItem(.separator())
+
+        let install = NSMenuItem(
+            title: "Réinstaller les hooks Claude Code",
+            action: #selector(reinstallHooks), keyEquivalent: "")
+        install.target = self
+        menu.addItem(install)
+
+        let uninstall = NSMenuItem(
+            title: "Désinstaller les hooks Claude Code",
+            action: #selector(uninstallHooks), keyEquivalent: "")
+        uninstall.target = self
+        menu.addItem(uninstall)
+
+        menu.addItem(.separator())
+
+        let quit = NSMenuItem(
+            title: "Quitter Island", action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q")
+        quit.target = NSApplication.shared
+        menu.addItem(quit)
+
+        return menu
+    }
+
+    @objc private func toggleBorder(_ sender: NSMenuItem) {
+        settings.borderEnabled.toggle()
+        sender.state = settings.borderEnabled ? .on : .off
+        print("island: preference borderEnabled=\(settings.borderEnabled)")
+    }
+
+    @objc private func toggleSound(_ sender: NSMenuItem) {
+        settings.soundEnabled.toggle()
+        sender.state = settings.soundEnabled ? .on : .off
+        print("island: preference soundEnabled=\(settings.soundEnabled)")
+    }
+
+    @objc private func toggleLoginItem(_ sender: NSMenuItem) {
+        let target = !LoginItem.isEnabled
+        LoginItem.setEnabled(target)
+        sender.state = LoginItem.isEnabled ? .on : .off
     }
 }
 
