@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.9
+
+- #31 Fiabilise l'état des Sessions en temps réel : une notification d'inactivité ne crée plus de faux « attend » ni ne ressuscite un tour terminé (whitelist de blocage + repli sur le texte) ; le suivi des sous-agents (`SubagentStart`/`Stop`, compteur sur la Session parente) empêche d'afficher « terminée » tant qu'un sous-agent tourne, la fin de tour n'étant actée qu'au dernier sous-agent arrêté — même si son `Stop` arrive après le `Stop` principal.
+
 ## 0.1.8
 
 - #33 Réparé le click-to-focus : le premier clic sur une carte (ou le Peek) ramène Ghostty au premier plan du premier coup, même quand l'Island n'est pas l'app active — via `acceptsFirstMouse` sur le contenu du panneau vendoré non-activant, sans jamais rendre l'Island activante (ciblage de la fenêtre/onglet exact = v1.5, suivi en #36).
