@@ -82,6 +82,7 @@ public final class IslandController {
     private func sessionsDidChange(_ sessions: [Session]) {
         viewModel.compactStatus = Self.compactStatus(for: sessions)
         viewModel.cards = sessions.map { SessionCard(session: $0) }
+        log("sessions: \(Self.sessionsTrace(for: sessions))")
 
         let newlyEnded = sessions.filter {
             $0.state == .ended && !knownEndedSessionIDs.contains($0.id)
@@ -142,6 +143,21 @@ public final class IslandController {
     private func log(_ message: String) {
         let timestamp = ISO8601DateFormatter().string(from: Date())
         print("island: [\(timestamp)] \(message)")
+    }
+
+    /// One line per throttled refresh (never one per event): lets agentic
+    /// tests follow the Session lifecycle — and the throttling — from stdout.
+    static func sessionsTrace(for sessions: [Session]) -> String {
+        guard !sessions.isEmpty else { return "none" }
+        return sessions
+            .map { session in
+                var parts = "\(session.projectName)[\(session.id)]=\(session.state)"
+                if let tool = session.currentTool {
+                    parts += "(\(tool))"
+                }
+                return parts
+            }
+            .joined(separator: " ")
     }
 
     /// One glyph per Session — the compact bar mirrors the session list.
