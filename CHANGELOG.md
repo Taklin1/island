@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.7
+
+- #11 Sprites pixel-art animés par Session (planche « Bots » + logo île + glyphes d'état des cartes Étendues, sheets embarquées, moteur SpriteView, mapping états → animations, teintes #8 portées par le Sprite).
+
 ## 0.1.6
 
 - #8 État « attend » et Liseré avec Acquittement : hook Notification → Session « attend », Liseré plein écran click-through sur tous les Spaces et par-dessus le fullscreen (orange = attend prioritaire sur vert = terminé, persistant jusqu'à Acquittement — survol, focus terminal observé, ou clic sur carte), Peek à l'entrée en attente, Compact teinté, préférence Liseré respectée en live.
