@@ -102,22 +102,7 @@ public struct HookInstaller {
     /// Copies the current settings file, byte for byte, to a timestamped
     /// sibling before it gets rewritten. Returns nil when there is no file yet.
     private func backupExistingFile() throws -> URL? {
-        guard let original = try? Data(contentsOf: settingsURL) else { return nil }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone.current
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let stamp = formatter.string(from: now())
-        var backup = settingsURL.deletingLastPathComponent()
-            .appendingPathComponent("\(settingsURL.lastPathComponent).island-backup-\(stamp)")
-        var counter = 1
-        while FileManager.default.fileExists(atPath: backup.path) {
-            backup = settingsURL.deletingLastPathComponent()
-                .appendingPathComponent("\(settingsURL.lastPathComponent).island-backup-\(stamp)-\(counter)")
-            counter += 1
-        }
-        try original.write(to: backup, options: .atomic)
-        return backup
+        try TimestampedBackup.create(of: settingsURL, at: now())
     }
 
     /// An entry is island's when one of its commands targets the island endpoint.

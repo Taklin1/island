@@ -26,6 +26,7 @@ public final class IslandController {
     }
 
     private let store: SessionStore
+    private let quotaStore: QuotaStore
     /// Click-to-focus (issue #10): brings the Session's terminal frontmost.
     /// Injected so the UI never depends on a concrete terminal module.
     private let focusTerminal: ((String?) -> Void)?
@@ -42,8 +43,13 @@ public final class IslandController {
     /// Store updates are coalesced to at most one UI refresh per interval.
     private let refreshInterval: DispatchQueue.SchedulerTimeType.Stride = .milliseconds(200)
 
-    public init(store: SessionStore, focusTerminal: ((String?) -> Void)? = nil) {
+    public init(
+        store: SessionStore,
+        quotaStore: QuotaStore = QuotaStore(),
+        focusTerminal: ((String?) -> Void)? = nil
+    ) {
         self.store = store
+        self.quotaStore = quotaStore
         self.focusTerminal = focusTerminal
         viewModel.activateSession = { [weak self] sessionID in
             self?.cardActivated(sessionID: sessionID)
@@ -85,12 +91,38 @@ public final class IslandController {
                 }
             }
             .store(in: &cancellables)
+
+        // Quotas (issue #9): global gauges + per-Session context, throttled
+        // like the sessions (the statusline fires on every UI refresh).
+        quotaStore.$quotas
+            .removeDuplicates()
+            .throttle(for: refreshInterval, scheduler: DispatchQueue.main, latest: true)
+            .sink { [weak self] quotas in
+                MainActor.assumeIsolated {
+                    self?.quotasDidChange(quotas)
+                }
+            }
+            .store(in: &cancellables)
+
+        quotaStore.$contextBySession
+            .removeDuplicates()
+            .throttle(for: refreshInterval, scheduler: DispatchQueue.main, latest: true)
+            .sink { [weak self] context in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.refreshCards()
+                    if !context.isEmpty {
+                        self.log("context: \(Self.contextTrace(for: context))")
+                    }
+                }
+            }
+            .store(in: &cancellables)
     }
 
     private func sessionsDidChange(_ sessions: [Session]) {
         viewModel.compactStatus = Self.compactStatus(for: sessions)
         viewModel.compactTone = Self.compactTone(for: sessions)
-        viewModel.cards = sessions.map { SessionCard(session: $0) }
+        viewModel.cards = sessions.map { self.card(for: $0) }
         log("sessions: \(Self.sessionsTrace(for: sessions))")
 
         let newlyEnded = sessions.filter {
@@ -120,6 +152,48 @@ public final class IslandController {
         store.acknowledge(sessionID: sessionID)
         log("card activated: \(sessionID) → focus terminal \(session?.terminal ?? "default")")
         focusTerminal?(session?.terminal)
+    }
+
+    // MARK: - Quotas (issue #9)
+
+    private func card(for session: Session) -> SessionCard {
+        SessionCard(
+            session: session,
+            contextUsedPercentage: quotaStore.contextBySession[session.id]
+        )
+    }
+
+    /// Rebuilds the cards without re-tracing the sessions (context refresh).
+    private func refreshCards() {
+        viewModel.cards = store.sessions.map { self.card(for: $0) }
+    }
+
+    private func quotasDidChange(_ quotas: Quotas?) {
+        viewModel.quotaGauges = quotas.map(QuotaGauge.gauges(for:)) ?? []
+        log("quotas: \(quotas.map(Self.quotasTrace(for:)) ?? "hidden")")
+    }
+
+    /// Compact stdout trace of the global Quotas, so agentic tests can assert
+    /// the gauges state-first ("none" when no window was reported).
+    static func quotasTrace(for quotas: Quotas) -> String {
+        var parts: [String] = []
+        if let fiveHour = quotas.fiveHour {
+            parts.append("5h=\(fiveHour.usedPercentage)%")
+            if let resetsAt = fiveHour.resetsAt {
+                parts.append("reset=\(Int(resetsAt.timeIntervalSince1970))")
+            }
+        }
+        if let sevenDay = quotas.sevenDay {
+            parts.append("7d=\(sevenDay.usedPercentage)%")
+        }
+        return parts.isEmpty ? "none" : parts.joined(separator: " ")
+    }
+
+    /// Stdout trace of the per-Session context usage, sorted for stability.
+    static func contextTrace(for context: [String: Double]) -> String {
+        context.sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)%" }
+            .joined(separator: " ")
     }
 
     // MARK: - Extended mode (hover only)
@@ -187,6 +261,9 @@ public final class IslandController {
                 if let tool = session.currentTool {
                     parts += "(\(tool))"
                 }
+                if session.lastSummary != nil {
+                    parts += "+summary"
+                }
                 return parts
             }
             .joined(separator: " ")
@@ -201,11 +278,16 @@ public final class IslandController {
         case finished
     }
 
-    /// What the Peek announces for a marking event on a Session.
+    /// What the Peek announces for a marking event on a Session: the waiting
+    /// call to action, or the first line of the turn summary (ADR-0002, falls
+    /// back to the bare "terminé" when the transcript had nothing usable).
     static func peekText(for session: Session) -> String {
         session.state == .waiting
             ? "\(session.projectName) ? attend une réponse"
-            : "\(session.projectName) ✓ terminé"
+            : SessionCard.peekLine(
+                project: session.projectName,
+                summaryText: session.lastSummary?.text
+            )
     }
 
     /// Orange when a Session waits, green when one finished, neutral
@@ -237,6 +319,9 @@ final class IslandViewModel: ObservableObject {
     /// false when an expansion shows a Peek.
     @Published var showCards: Bool = false
     @Published var cards: [SessionCard] = []
+    /// Global Quotas gauges (5 h / 7 d); empty = hidden (no rate limits
+    /// reported yet — issue #9, never a misleading zero).
+    @Published var quotaGauges: [QuotaGauge] = []
     /// Click-to-focus: set by the controller, called by card/Peek taps.
     var activateSession: ((String) -> Void)?
 }
@@ -271,6 +356,11 @@ struct SessionCardsView: View {
                     .onTapGesture {
                         model.activateSession?(card.id)
                     }
+            }
+            // Quotas (issue #9): global gauges at the foot of the panel,
+            // only when the statusline reported rate limits.
+            if !model.quotaGauges.isEmpty {
+                QuotaGaugesView(gauges: model.quotaGauges)
             }
         }
         .padding(12)
@@ -321,6 +411,25 @@ struct SessionCardView: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.orange)
                     .lineLimit(1)
+            }
+            if let summary = card.summaryText {
+                Text(summary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(6)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let facts = card.summaryFacts {
+                Text(facts)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            // Quotas (issue #9): per-Session context usage from the tee.
+            if let context = card.contextLabel {
+                Text(context)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 6)

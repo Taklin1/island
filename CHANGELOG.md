@@ -3,6 +3,14 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.5
+
+- #9 Quotas via tee de la statusline : endpoint dédié du Serveur local, QuotaStore (jauges 5 h/7 j + reset, % contexte par Session, masquées sans rate_limits), tee opt-in dans le script statusline (bloc marqué inséré après input=$(cat), curl fire-and-forget, backup horodaté, idempotent, opt-out restauration byte-exacte), jauges + % contexte dans la vue Étendue.
+
+## 0.1.4
+
+- #7 Résumé par extraction locale du transcript (ADR-0002) : au Stop, TranscriptReader lit la fin du transcript JSONL (défensif, sidechains exclues, plafond 4 Mo, repli « état + projet » garanti) et publie le Résumé — première ligne dans le Peek, détail (message, todos, fichiers, durée) dans la carte Étendue.
+
 ## 0.1.3
 
 - #6 Installation automatique des hooks Claude Code au premier lancement (merge additif préservant les hooks tiers, backup horodaté, idempotent, désinstallation propre, fix curl stdin en arrière-plan) + cycle de vie : icône barre de menu (préférences Liseré/Son, login item SMAppService, réinstaller/désinstaller les hooks, quitter).

@@ -18,8 +18,24 @@ struct SessionCard: Identifiable, Equatable {
     /// Start of the current turn, when the Session is working (drives the
     /// live elapsed-time display).
     let turnStartedAt: Date?
+    /// Context window usage of this Session (0–100), when the statusline tee
+    /// reported one (issue #9). nil = not shown.
+    let contextUsedPercentage: Double?
+    /// Last assistant message of the finished turn (ADR-0002), shown in the
+    /// card's content section. `nil` when extraction failed (fallback:
+    /// state + project only).
+    let summaryText: String?
+    /// One compact line of turn facts — "todos 1/3 · 2 fichiers · 3:20" —
+    /// keeping only what the extraction actually found.
+    let summaryFacts: String?
 
-    init(session: Session, home: String = NSHomeDirectory()) {
+    /// French context label of the card's Quotas section, or nil when the
+    /// tee never reported a context usage for this Session.
+    var contextLabel: String? {
+        contextUsedPercentage.map { "contexte \(Int($0.rounded())) %" }
+    }
+
+    init(session: Session, contextUsedPercentage: Double? = nil, home: String = NSHomeDirectory()) {
         id = session.id
         project = session.projectName
         if let cwd = session.cwd, !cwd.isEmpty {
@@ -28,9 +44,63 @@ struct SessionCard: Identifiable, Equatable {
             location = nil
         }
         (stateLabel, glyph) = Self.presentation(of: session.state)
+        self.contextUsedPercentage = contextUsedPercentage
         lastPrompt = session.lastPrompt
         currentTool = session.currentTool
         turnStartedAt = session.turnStartedAt
+        summaryText = session.lastSummary?.text
+        summaryFacts = session.lastSummary.flatMap(Self.factsLine(for:))
+    }
+
+    /// Builds the facts line from a turn summary; every part is optional and
+    /// an empty summary yields no line at all.
+    private static func factsLine(for summary: TurnSummary) -> String? {
+        var parts: [String] = []
+        if let done = summary.todosDone, let total = summary.todosTotal {
+            parts.append("todos \(done)/\(total)")
+        }
+        switch summary.filesModified.count {
+        case 0: break
+        case 1: parts.append("1 fichier")
+        case let n: parts.append("\(n) fichiers")
+        }
+        if let duration = summary.turnDuration {
+            parts.append(durationText(seconds: max(0, Int(duration))))
+        }
+        guard !parts.isEmpty else { return nil }
+        return parts.joined(separator: " · ")
+    }
+
+    /// The one-line Peek for a finished turn: first meaningful line of the
+    /// summary after the project name, or the bare "terminé" fallback when
+    /// the transcript could not be summarized (ADR-0002: the notification
+    /// always goes out).
+    static func peekLine(project: String, summaryText: String?, maxLength: Int = 80) -> String {
+        let headline = summaryText
+            .flatMap(firstMeaningfulLine(of:))
+            .map { truncate($0, at: maxLength) }
+        return "\(project) ✓ \(headline ?? "terminé")"
+    }
+
+    /// First non-empty line, shedding markdown heading/list markers so the
+    /// Peek reads as a sentence.
+    private static func firstMeaningfulLine(of text: String) -> String? {
+        for line in text.split(separator: "\n") {
+            let stripped = line
+                .trimmingCharacters(in: .whitespaces)
+                .drop(while: { "#->*• ".contains($0) })
+                .trimmingCharacters(in: .whitespaces)
+            if !stripped.isEmpty { return stripped }
+        }
+        return nil
+    }
+
+    /// Cuts on a word boundary and appends an ellipsis when over the limit.
+    private static func truncate(_ text: String, at limit: Int) -> String {
+        guard text.count > limit else { return text }
+        let head = text.prefix(limit)
+        let cut = head.lastIndex(where: { $0 == " " }).map { head[..<$0] } ?? head
+        return cut.trimmingCharacters(in: .whitespaces) + "…"
     }
 
     static func presentation(of state: SessionState) -> (label: String, glyph: String) {
