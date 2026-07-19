@@ -359,6 +359,35 @@ struct ClaudeCodeAdapterTests {
         #expect(event.title == "Renamed session")
     }
 
+    @Test("Hover refresh re-reads a /rename that fired no hook (#32 regression)")
+    func titleRefresherPicksUpRenameWithoutHook() throws {
+        // The real failure: rename an idle/ended Session, no further hook fires,
+        // so nothing re-reads the transcript. The refresher, triggered on hover,
+        // re-reads the remembered transcript and picks up the new title.
+        let transcript = FileManager.default.temporaryDirectory
+            .appendingPathComponent("refresher-\(UUID().uuidString).jsonl")
+        func write(_ title: String) throws {
+            try Data(#"{"type":"ai-title","aiTitle":"\#(title)","sessionId":"s1"}"#.utf8)
+                .write(to: transcript)
+        }
+        try write("Original title")
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let refresher = ClaudeCodeTitleRefresher()
+        let payload = Data("""
+            {"session_id": "s1", "transcript_path": "\(transcript.path)", "hook_event_name": "Stop"}
+            """.utf8)
+        refresher.observe(hookPayload: payload)
+        #expect(refresher.currentTitle(forSessionID: "s1") == "Original title")
+
+        // /rename with no subsequent hook: only the transcript changes.
+        try write("Renamed while idle")
+        #expect(refresher.currentTitle(forSessionID: "s1") == "Renamed while idle")
+
+        // A Session the refresher never saw has no path to re-read.
+        #expect(refresher.currentTitle(forSessionID: "unknown") == nil)
+    }
+
     @Test("An unreadable transcript leaves the title nil, and the event still flows")
     func unreadableTranscriptLeavesTitleNil() throws {
         // Fixtures.stop points at a path that does not exist here.

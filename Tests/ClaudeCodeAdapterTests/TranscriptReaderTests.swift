@@ -184,6 +184,22 @@ struct TranscriptReaderTests {
         #expect(TranscriptReader.title(ofTranscriptAt: url) == nil)
     }
 
+    @Test("A title far from the end is still found with the default cap (regression: the 256 KB cap missed it) #32")
+    func titleFoundFarFromEnd() throws {
+        // Real failure shape: the current title's cluster can sit well before
+        // EOF when a single turn produced a lot of output afterwards. A too-small
+        // tail cap silently missed it and the old title stuck. The default cap
+        // (4 MB) must reach it.
+        let fillerLine = #"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"filler output line"}]},"uuid":"f"}"#
+        let fillerCount = (300 * 1024) / (fillerLine.count + 1) + 1
+        let filler = Array(repeating: fillerLine, count: fillerCount).joined(separator: "\n")
+        let contents = TranscriptFixtures.aiTitleLine("Current title") + "\n" + filler
+        let url = TranscriptFixtures.write(contents)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(TranscriptReader.title(ofTranscriptAt: url) == "Current title")
+    }
+
     @Test("A huge transcript is read from its tail: the freshest title wins")
     func bigTranscriptTitleFromTail() throws {
         // The title record is re-emitted throughout the transcript, so the tail

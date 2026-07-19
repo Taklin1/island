@@ -265,6 +265,23 @@ struct SessionStoreTests {
         #expect(store.sessions[0].title == "Renamed by the user")
     }
 
+    @Test("setTitle updates a known Session out of band, and is a no-op otherwise (#32 hover refresh)")
+    func setTitleUpdatesKnownSessionOnly() {
+        let store = SessionStore()
+        store.apply(AgentEvent(
+            sessionID: "s1", kind: .promptSubmitted(prompt: "Go"),
+            cwd: "/tmp/demo", agent: "claude-code", title: "Old title"))
+        #expect(store.sessions[0].title == "Old title")
+
+        // The hover refresh found a fresher title in the transcript.
+        store.setTitle("Renamed while idle", forSessionID: "s1")
+        #expect(store.sessions[0].title == "Renamed while idle")
+
+        // Unknown Session: no crash, no new Session.
+        store.setTitle("whatever", forSessionID: "ghost")
+        #expect(store.sessions.count == 1)
+    }
+
     // MARK: - Subagents and real-time state fidelity (issue #31)
 
     @Test("A Stop while a subagent is still running keeps the Session running, not ended")

@@ -15,14 +15,6 @@ public enum TranscriptReader {
     /// How much of the end of the transcript is read at most.
     public static let defaultMaxTailBytes = 4 * 1024 * 1024
 
-    /// How much of the end is read when only the session title is wanted
-    /// (issue #32). Much smaller than the summary cap: the `ai-title` record is
-    /// re-emitted throughout the transcript (roughly every few dozen KB) and a
-    /// `/rename` appends a fresh one at the very end, so a modest tail always
-    /// holds the current title — and this read runs on *every* event, so it
-    /// must stay cheap.
-    public static let defaultTitleTailBytes = 256 * 1024
-
     /// Reads the transcript tail and summarizes the last main turn.
     ///
     /// - Returns: the summary, or `nil` when the file is missing, unreadable,
@@ -103,22 +95,30 @@ public enum TranscriptReader {
     /// Extracts the current session title (issue #32) from the transcript.
     ///
     /// Claude Code writes the title on its own JSONL line
-    /// (`{"type":"ai-title","aiTitle":"…"}`) and re-emits it as the conversation
-    /// grows; `/rename` appends a new one. Walking the bounded tail backwards
-    /// and returning the first `ai-title` found therefore yields the *current*
-    /// title, reflecting a rename. Defensive like ``summary(ofTranscriptAt:)``:
-    /// a missing/unreadable/titleless transcript returns `nil` and the caller
-    /// falls back to the project folder name.
+    /// (`{"type":"ai-title","aiTitle":"…"}`) inside a metadata cluster it emits
+    /// around prompt boundaries, re-emitting it as the conversation grows;
+    /// `/rename` makes a later cluster carry the new value. Walking the tail
+    /// backwards and returning the first `ai-title` found therefore yields the
+    /// *current* title, reflecting a rename.
+    ///
+    /// Reads the same generous tail as ``summary(ofTranscriptAt:)`` (4 MB): the
+    /// last title cluster can sit far from EOF when a single turn produced a lot
+    /// of output, and a too-small cap silently missed it (the bug behind #32's
+    /// first fix). A cheap substring pre-filter keeps the scan fast even on the
+    /// full tail — only the handful of `ai-title` lines are ever JSON-decoded.
+    /// Defensive like the summary: a missing/unreadable/titleless transcript
+    /// returns `nil` and the caller falls back to the project folder name.
     ///
     /// - Returns: the current title, or `nil` when none is present in the tail.
     public static func title(
         ofTranscriptAt url: URL,
-        maxTailBytes: Int = defaultTitleTailBytes
+        maxTailBytes: Int = defaultMaxTailBytes
     ) -> String? {
         guard let lines = tailLines(of: url, maxBytes: maxTailBytes) else { return nil }
 
         for raw in lines.reversed() {
-            guard let line = TranscriptLine(jsonLine: raw), line.type == "ai-title" else {
+            guard raw.range(of: "ai-title") != nil,
+                let line = TranscriptLine(jsonLine: raw), line.type == "ai-title" else {
                 continue
             }
             let title = line.aiTitle?.trimmingCharacters(in: .whitespacesAndNewlines)

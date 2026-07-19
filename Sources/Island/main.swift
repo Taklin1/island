@@ -17,6 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SessionStore()
     private let quotaStore = QuotaStore()
     private let settings = AppSettings()
+    /// Re-reads Session titles on Extended open (issue #32): remembers each
+    /// Session's transcript path from the hooks and re-reads it on hover, so a
+    /// `/rename` on an idle/ended Session (no hook fires) still shows up.
+    private let titleRefresher = ClaudeCodeTitleRefresher()
     private var server: LocalServer?
     private var controller: IslandController?
     private var glow: GlowController?
@@ -26,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let store = store
         let quotaStore = quotaStore
+        let titleRefresher = titleRefresher
         installHooksOnFirstLaunch()
         installMenuBarIcon()
         Task { @MainActor in
@@ -33,7 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let token = try TokenStore.loadOrCreate()
                 let server = LocalServer(
                     token: token,
-                    translate: ClaudeCodeAdapter.event(fromHookPayload:),
+                    translate: { data in
+                        // Remember the transcript path (issue #32) before
+                        // translating, so hover can re-read the title later.
+                        titleRefresher.observe(hookPayload: data)
+                        return ClaudeCodeAdapter.event(fromHookPayload: data)
+                    },
                     publish: { event in
                         // The server already answered the hook; publishing is
                         // asynchronous and never blocks Claude Code.
@@ -52,7 +62,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let controller = IslandController(
                     store: store,
                     quotaStore: quotaStore,
-                    focusTerminal: { TerminalFocuser.live.focus(terminal: $0) }
+                    focusTerminal: { TerminalFocuser.live.focus(terminal: $0) },
+                    // Extended open (issue #32): re-read each Session's title so
+                    // a /rename that fired no hook is reflected on hover.
+                    refreshTitles: {
+                        for session in store.sessions {
+                            if let title = titleRefresher.currentTitle(forSessionID: session.id) {
+                                store.setTitle(title, forSessionID: session.id)
+                            }
+                        }
+                    }
                 )
                 self.controller = controller
                 await controller.activate()

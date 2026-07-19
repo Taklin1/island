@@ -246,6 +246,19 @@ public final class SessionStore: ObservableObject {
         }
     }
 
+    // MARK: - Title refresh (issue #32)
+
+    /// Updates a known Session's title out of band — used by the Extended-hover
+    /// refresh to reflect a `/rename` that fired no hook (an idle/ended Session
+    /// gets no further event to re-read its transcript). No-op for an unknown
+    /// Session or an unchanged title, so it never publishes needlessly.
+    public func setTitle(_ title: String, forSessionID id: String) {
+        guard let index = sessions.firstIndex(where: { $0.id == id }),
+            sessions[index].title != title
+        else { return }
+        sessions[index].title = title
+    }
+
     // MARK: - Acknowledgement (issues #8 / #10)
 
     /// Hovering the Island acknowledges every pending Session at once.
