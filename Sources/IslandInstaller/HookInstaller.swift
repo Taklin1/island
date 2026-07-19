@@ -26,9 +26,14 @@ public struct HookInstaller {
 
     /// Fire-and-forget hook command: 2 s cap, backgrounded, silent on failure —
     /// Claude Code is never blocked nor slowed down when the app is not running.
+    ///
+    /// The payload MUST be captured in the foreground before backgrounding
+    /// curl: POSIX redirects a background job's stdin to /dev/null in
+    /// non-interactive shells, so a plain `curl --data-binary @- … &` would
+    /// silently POST an empty body (verified end-to-end, FP #6).
     public static let defaultCommand =
-        "curl -s --max-time 2 -X POST \"\(endpoint)?token=$(cat ~/.claude/island-token)\" "
-        + "-H 'Content-Type: application/json' --data-binary @- >/dev/null 2>&1 &"
+        "payload=$(cat); curl -s --max-time 2 -X POST \"\(endpoint)?token=$(cat ~/.claude/island-token)\" "
+        + "-H 'Content-Type: application/json' --data-binary \"$payload\" >/dev/null 2>&1 &"
 
     private let settingsURL: URL
     private let command: String

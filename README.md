@@ -21,30 +21,21 @@ Au premier lancement, l'app :
 
 Pour une version optimisée : `swift build -c release` puis `.build/release/Island`.
 
-## Brancher Claude Code (hook manuel, tranche #4)
+## Brancher Claude Code (installation automatique, tranche #6)
 
-Dans cette tranche, le hook `Stop` se colle à la main dans `~/.claude/settings.json` (l'installation automatique viendra plus tard). Ajouter dans l'objet `"hooks"` :
+Plus aucune configuration manuelle : au **premier lancement**, l'app installe ses hooks dans `~/.claude/settings.json` (Stop, SessionStart, SessionEnd, UserPromptSubmit, Notification, PreToolUse, PostToolUse) :
 
-```json
-"Stop": [
-  {
-    "matcher": "",
-    "hooks": [
-      {
-        "type": "command",
-        "command": "curl -s --max-time 2 -X POST \"http://127.0.0.1:41414/hooks/claude-code?token=$(cat ~/.claude/island-token)\" -H 'Content-Type: application/json' --data-binary @- >/dev/null 2>&1 || true",
-        "timeout": 5
-      }
-    ]
-  }
-]
-```
+- **merge additif** : les hooks existants (ex. pixel-agents) sont préservés entrée par entrée, l'entrée island est ajoutée à côté ;
+- **backup horodaté** (`settings.json.island-backup-<date>`) avant toute écriture ;
+- **idempotent** : relancer l'app ne crée aucun doublon (détection par l'URL island dans la commande) ;
+- un fichier absent ou sans section `hooks` est créé/complété proprement ; un fichier illisible n'est **jamais** touché.
 
-Propriétés du hook :
+Propriétés de la commande installée :
 
-- `curl --max-time 2` + `|| true` : échec silencieux, Claude Code n'est **jamais** bloqué ni ralenti si l'app ne tourne pas (US 18).
-- Le payload du hook (stdin) est forwardé tel quel ; l'app ignore `SubagentStop` et tout payload illisible.
-- Requête sans token valide → 401.
+- `payload=$(cat)` puis `curl --max-time 2 … &` : le payload est capturé au premier plan (un job en arrière-plan a son stdin sur `/dev/null` — POSIX), le POST part en arrière-plan, échec silencieux : Claude Code n'est **jamais** bloqué ni ralenti si l'app ne tourne pas (US 18).
+- L'app ignore `SubagentStop` et tout payload illisible ; requête sans token valide → 401.
+
+Depuis l'icône barre de menu : préférences (Liseré, Son, ouverture à la connexion — SMAppService, effectif une fois l'app empaquetée en `.app`), **Réinstaller / Désinstaller les hooks Claude Code** (la désinstallation ne retire que les entrées island), Quitter.
 
 Démo : lancer l'app, finir un tour Claude Code dans le terminal → Peek « `<projet>` ✓ terminé » pendant ~2,5 s, puis retour au Compact.
 
