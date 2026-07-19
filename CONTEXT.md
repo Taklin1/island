@@ -5,7 +5,7 @@ App macOS qui affiche l'état des sessions Claude Code dans une interface flotta
 ## Language
 
 **Island** :
-L'interface flottante en haut-centre de l'écran, seule surface d'affichage de l'app.
+Le panneau flottant en haut-centre de l'écran, **masqué par défaut** : il ne se montre que sur Peek ou Révélation. Distinct du Liseré (bords de l'écran) et de l'Icône animée (barre des menus).
 _Avoid_ : notch, encoche, widget
 
 **Session** :
@@ -22,25 +22,33 @@ Composant qui traduit les événements bruts d'un outil agent (v1 : les hooks Cl
 **Serveur local** :
 Serveur HTTP embarqué dans l'app, sur 127.0.0.1, seul point d'entrée des Événements.
 
-**Compact** :
-Mode par défaut de l'Island : micro-barre avec un Sprite par Session et un statut court. Ne s'étend jamais sans survol ou Peek.
+**Masqué** :
+État de repos de l'Island : rien à l'écran. Une Session qui ne fait que travailler n'affiche rien ; seuls un Peek ou une Révélation en sortent l'Island (ADR-0007, remplace le mode « Compact » toujours-visible d'ADR-0003).
+_Avoid_ : compact, micro-barre
 
 **Étendu** :
-Mode de l'Island au survol : une carte par Session (projet, dernier prompt, Résumé, badges, quotas).
+Mode de l'Island après Révélation : une carte par Session (projet, dernier prompt, Résumé, badges, quotas). Se replie (retour à Masqué) quand le curseur quitte le panneau (petit délai de grâce anti-clignotement).
+
+**Révélation** :
+Geste qui sort l'Island de l'état Masqué à la demande : pousser le curseur contre le bord haut de l'écran (« bord franc »), dans une bande centrée ~280 pt près de la webcam. Ne se déclenche que s'il existe ≥1 Session, à tout moment (repos comme attente), plein écran compris. N'acquitte rien.
+_Avoid_ : survol (ambigu), hover
 
 **Peek** :
-Expansion partielle automatique de 2-3 secondes à l'arrivée d'un Événement marquant, puis retour au Compact.
+Sortie automatique de l'Island ~2-3 s à l'arrivée d'un Événement marquant (montre le Sprite de la Session concernée), puis retour à Masqué. Transitoire : la persistance de l'attention est portée par le Liseré, pas par le Peek.
 _Avoid_ : toast, popup
 
 **Sprite** :
-Mascotte pixel-art animée représentant une Session dans le mode Compact ; son animation encode l'état (travaille, dort, fini, question).
+Mascotte pixel-art animée représentant une Session, affichée dans le Peek et les cartes (Étendu) ; son animation encode l'état (travaille, dort, fini, question).
+
+**Icône animée** :
+Mascotte pixel-art unique dans la barre des menus (à droite, `NSStatusItem` — macOS ne permet pas le centre), reflétant l'état agrégé le plus pressant sur toutes les Sessions : waiting > terminé > working > idle. Idle (zéro Session ou tout acquitté) = mascotte qui dort. Affichage optionnel (réglage Island).
 
 **Liseré** :
 Contour lumineux dessiné sur les bords de l'écran tant qu'un Événement marquant n'est pas Acquitté. Orange : une Session attend une réponse. Vert : une Session a terminé.
 _Avoid_ : glow, halo, bordure
 
 **Acquittement** :
-Action utilisateur qui éteint le Liseré et le Peek associés à une Session : survoler l'Island ou refocaliser le terminal de la Session.
+Action utilisateur qui éteint le Liseré d'une Session, **une Session à la fois** : cliquer sa carte (click-to-focus) ou refocaliser son terminal. Révéler ou survoler l'Island n'acquitte rien (regarder ≠ traiter).
 
 **Résumé** :
 Ce que l'Island affiche d'un tour terminé : extrait local du transcript (dernier message assistant, todos, fichiers modifiés). Jamais généré par un appel LLM.
