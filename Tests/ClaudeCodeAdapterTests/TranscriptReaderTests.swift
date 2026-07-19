@@ -29,6 +29,17 @@ private enum TranscriptFixtures {
         {"parentUuid":"sc-2","isSidechain":true,"type":"assistant","message":{"id":"msg_02B","type":"message","role":"assistant","model":"claude-test","content":[{"type":"text","text":"Subagent report: tests refactored."}],"stop_reason":null},"requestId":"req_5","uuid":"sc-3","timestamp":"2026-07-19T10:03:40.000Z","sessionId":"11111111-2222-3333-4444-555555555555","cwd":"/Users/dev/projects/demo","version":"2.1.215","gitBranch":"main"}
         """
 
+    /// A turn that ends on an `AskUserQuestion` tool_use — the "en attente"
+    /// moment the Island reacts to (spike #25). Anonymized but structurally
+    /// faithful to the real JSONL: `input.questions[]`, each with `question`,
+    /// `header`, `multiSelect` and ordered `options[]` (`{label, description}`).
+    /// The answer line is omitted on purpose: when a Session waits, the tail
+    /// ends here, before any answer. Issue #26 will extract options from this.
+    static let askUserQuestionTail = """
+        {"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"Choose the sprite direction"},"uuid":"q-u1","timestamp":"2026-07-19T11:00:00.000Z","sessionId":"11111111-2222-3333-4444-555555555555","cwd":"/Users/dev/projects/demo","version":"2.1.215","gitBranch":"main"}
+        {"parentUuid":"q-u1","isSidechain":false,"type":"assistant","message":{"id":"msg_Q1","type":"message","role":"assistant","model":"claude-test","content":[{"type":"tool_use","id":"toolu_q1","name":"AskUserQuestion","input":{"questions":[{"question":"Which sprite direction for Compact mode?","header":"Sprites","multiSelect":false,"options":[{"label":"Bots (Recommended)","description":"Robot-terminal, most legible at 32px."},{"label":"Blobs","description":"Round Tamagotchi-like creature."},{"label":"None — iterate","description":"Nothing fits; propose a new set."}]},{"question":"Keep the state glyphs as-is?","header":"Glyphs","multiSelect":true,"options":[{"label":"Cadence OK","description":"Keep 2-7 fps by state."},{"label":"Glyphs OK","description":"Keep the floating state glyphs."}]}]}}],"stop_reason":"tool_use"},"requestId":"req_q","uuid":"q-a1","timestamp":"2026-07-19T11:00:05.000Z","sessionId":"11111111-2222-3333-4444-555555555555","cwd":"/Users/dev/projects/demo","version":"2.1.215","gitBranch":"main"}
+        """
+
     /// Writes a fixture to a unique temp file and returns its URL.
     static func write(_ contents: String, name: String = UUID().uuidString) -> URL {
         let url = FileManager.default.temporaryDirectory
@@ -75,6 +86,20 @@ struct TranscriptReaderTests {
         #expect(summary.text?.hasPrefix("Fixed the parser crash.") == true)
         // The subagent's Edit does not count as a main-turn modification.
         #expect(summary.filesModified == ["/Users/dev/projects/demo/Sources/App/Parser.swift"])
+    }
+
+    @Test("An AskUserQuestion turn is read defensively: no crash, no stray text")
+    func askUserQuestionTurnTolerated() throws {
+        // Spike #25 fixture. The current reader has NO AskUserQuestion option
+        // extraction (that is issue #26): it must simply tolerate the tool_use
+        // turn — never crash, and surface no assistant text (the turn ends on a
+        // tool_use, not prose). This locks the defensive contract #26 builds on.
+        let url = TranscriptFixtures.write(TranscriptFixtures.askUserQuestionTail)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let summary = TranscriptReader.summary(ofTranscriptAt: url)
+        #expect(summary?.text == nil)
+        #expect(summary?.filesModified.isEmpty ?? true)
     }
 
     @Test("A missing transcript falls back to nil without crashing")
