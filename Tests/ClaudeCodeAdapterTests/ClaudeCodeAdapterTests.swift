@@ -131,6 +131,39 @@ struct ClaudeCodeAdapterTests {
         #expect(event.kind == .toolFinished(tool: "Bash"))
     }
 
+    @Test("PreToolUse for the Task tool feeds the subagent gate, not a plain tool (#39/#31)")
+    func preToolUseTaskBecomesSubagentStarted() throws {
+        // island never installs SubagentStart/SubagentStop, so the subagent
+        // gate is fed from the Task tool's Pre/PostToolUse — the real hooks
+        // island receives on the main session.
+        let payload = Data("""
+            {
+              "session_id": "abc123",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "PreToolUse",
+              "tool_name": "Task",
+              "tool_input": {"subagent_type": "Explore"}
+            }
+            """.utf8)
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
+        #expect(event.kind == .subagentStarted)
+    }
+
+    @Test("PostToolUse for the Task tool ends a subagent, not a plain tool (#39/#31)")
+    func postToolUseTaskBecomesSubagentStopped() throws {
+        let payload = Data("""
+            {
+              "session_id": "abc123",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "PostToolUse",
+              "tool_name": "Task",
+              "tool_input": {"subagent_type": "Explore"}
+            }
+            """.utf8)
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
+        #expect(event.kind == .subagentStopped)
+    }
+
     @Test("Stop hook payload becomes a generic 'turn ended' event")
     func stopPayloadBecomesEndedEvent() throws {
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))

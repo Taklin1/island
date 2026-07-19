@@ -17,6 +17,12 @@ public enum ClaudeCodeAdapter {
     /// tool-specific defaults never leak past the adapter).
     public static let defaultTerminal = "ghostty"
 
+    /// Claude Code's subagent-spawning tool. Its `PreToolUse`/`PostToolUse`
+    /// bracket a subagent's lifetime on the main session and feed the subagent
+    /// gate (#31) — because `SubagentStart`/`SubagentStop` are not installed as
+    /// island hooks (#39). Claude-Code-specific, so it stays behind the adapter.
+    static let subagentToolName = "Task"
+
     /// Translates a raw hook payload into a generic event.
     ///
     /// - Returns: the generic event, or `nil` when the payload is not valid
@@ -30,6 +36,12 @@ public enum ClaudeCodeAdapter {
         // agent_id; they never create a Session, they bump the parent's
         // active-subagent count (#31). Handle them before the agent_id guard
         // below, which drops the OTHER hooks fired inside a subagent.
+        //
+        // NB (#39): in practice island never receives these — `HookInstaller`
+        // installs 7 events and NOT SubagentStart/SubagentStop, so this branch
+        // is dead in production. The live subagent gate is fed instead from the
+        // Task tool's Pre/PostToolUse (see below), which island DOES install.
+        // This branch is kept (harmless) for adapters/tests that do emit them.
         switch payload.hookEventName {
         case "SubagentStart":
             return event(payload, kind: .subagentStarted)
@@ -55,10 +67,15 @@ public enum ClaudeCodeAdapter {
             kind = .promptSubmitted(prompt: prompt)
         case "PreToolUse":
             guard let tool = payload.toolName else { return nil }
-            kind = .toolStarted(tool: tool)
+            // The Task tool spawns a subagent on THIS (main) session. Since
+            // island never installs SubagentStart/SubagentStop, the #31 gate is
+            // fed here instead — from the Task tool's Pre/PostToolUse, which
+            // island DOES receive on the main session (agent_id == nil). Any
+            // other tool keeps its plain toolStarted/toolFinished (#39).
+            kind = tool == subagentToolName ? .subagentStarted : .toolStarted(tool: tool)
         case "PostToolUse":
             guard let tool = payload.toolName else { return nil }
-            kind = .toolFinished(tool: tool)
+            kind = tool == subagentToolName ? .subagentStopped : .toolFinished(tool: tool)
         case "Stop":
             // ADR-0002: summarize the turn by local extraction from the
             // transcript (todos, files, duration, and the last message text).
