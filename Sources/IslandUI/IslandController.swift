@@ -26,10 +26,14 @@ public final class IslandController {
     }
 
     private let store: SessionStore
+    /// Click-to-focus (issue #10): brings the Session's terminal frontmost.
+    /// Injected so the UI never depends on a concrete terminal module.
+    private let focusTerminal: ((String?) -> Void)?
     private let viewModel = IslandViewModel()
     private var notch: DynamicNotch<ExpandedContentView, CompactLeadingView, CompactTrailingView>?
     private var cancellables: Set<AnyCancellable> = []
     private var knownEndedSessionIDs: Set<String> = []
+    private var knownWaitingSessionIDs: Set<String> = []
     private var peekTask: Task<Void, Never>?
     private var mode: Mode = .compact
 
@@ -38,8 +42,12 @@ public final class IslandController {
     /// Store updates are coalesced to at most one UI refresh per interval.
     private let refreshInterval: DispatchQueue.SchedulerTimeType.Stride = .milliseconds(200)
 
-    public init(store: SessionStore) {
+    public init(store: SessionStore, focusTerminal: ((String?) -> Void)? = nil) {
         self.store = store
+        self.focusTerminal = focusTerminal
+        viewModel.activateSession = { [weak self] sessionID in
+            self?.cardActivated(sessionID: sessionID)
+        }
     }
 
     /// Shows the compact Island and starts reacting to session changes.
@@ -81,6 +89,7 @@ public final class IslandController {
 
     private func sessionsDidChange(_ sessions: [Session]) {
         viewModel.compactStatus = Self.compactStatus(for: sessions)
+        viewModel.compactTone = Self.compactTone(for: sessions)
         viewModel.cards = sessions.map { SessionCard(session: $0) }
         log("sessions: \(Self.sessionsTrace(for: sessions))")
 
@@ -89,19 +98,41 @@ public final class IslandController {
         }
         knownEndedSessionIDs = Set(sessions.filter { $0.state == .ended }.map(\.id))
 
-        if let session = newlyEnded.last {
+        let newlyWaiting = sessions.filter {
+            $0.state == .waiting && !knownWaitingSessionIDs.contains($0.id)
+        }
+        knownWaitingSessionIDs = Set(sessions.filter { $0.state == .waiting }.map(\.id))
+
+        // A blocked agent matters more than a finished one: same priority as
+        // the Liseré.
+        if let session = newlyWaiting.last ?? newlyEnded.last {
             peek(for: session)
         }
     }
 
+    // MARK: - Click-to-focus (issue #10)
+
+    /// A card (or the Peek) was clicked: acknowledge that Session and bring
+    /// its terminal frontmost. The Island itself never becomes active (the
+    /// panel is non-activating).
+    func cardActivated(sessionID: String) {
+        let session = store.sessions.first { $0.id == sessionID }
+        store.acknowledge(sessionID: sessionID)
+        log("card activated: \(sessionID) → focus terminal \(session?.terminal ?? "default")")
+        focusTerminal?(session?.terminal)
+    }
+
     // MARK: - Extended mode (hover only)
 
-    private func hoverDidChange(_ hovering: Bool) {
+    func hoverDidChange(_ hovering: Bool) {
         if hovering {
             peekTask?.cancel()
             mode = .expandedHover
             viewModel.showCards = true
-            log("expanded on hover: \(viewModel.cards.count) session card(s)")
+            // Hovering the Island is an Acknowledgement (issue #8): the user
+            // has seen the pending states, the Liseré goes out.
+            store.acknowledgeAll()
+            log("expanded on hover: \(viewModel.cards.count) session card(s), acknowledged all")
             Task { [weak self] in
                 await self?.notch?.expand()
             }
@@ -121,7 +152,8 @@ public final class IslandController {
     /// Never fights the Extended mode: while hovered, no Peek.
     private func peek(for session: Session) {
         guard mode != .expandedHover else { return }
-        viewModel.peekText = "\(session.projectName) ✓ terminé"
+        viewModel.peekText = Self.peekText(for: session)
+        viewModel.peekSessionID = session.id
 
         peekTask?.cancel()
         mode = .peek
@@ -160,6 +192,30 @@ public final class IslandController {
             .joined(separator: " ")
     }
 
+    /// Tint of the compact bar: mirrors the most pressing Session state.
+    enum CompactTone: Equatable {
+        case neutral
+        /// A Session waits on the user (orange, wins over everything).
+        case waiting
+        /// A Session finished its turn (green).
+        case finished
+    }
+
+    /// What the Peek announces for a marking event on a Session.
+    static func peekText(for session: Session) -> String {
+        session.state == .waiting
+            ? "\(session.projectName) ? attend une réponse"
+            : "\(session.projectName) ✓ terminé"
+    }
+
+    /// Orange when a Session waits, green when one finished, neutral
+    /// otherwise — same priority as the Liseré.
+    static func compactTone(for sessions: [Session]) -> CompactTone {
+        if sessions.contains(where: { $0.state == .waiting }) { return .waiting }
+        if sessions.contains(where: { $0.state == .ended }) { return .finished }
+        return .neutral
+    }
+
     /// One glyph per Session — the compact bar mirrors the session list.
     static func compactStatus(for sessions: [Session]) -> String {
         guard !sessions.isEmpty else { return "–" }
@@ -173,11 +229,16 @@ public final class IslandController {
 @MainActor
 final class IslandViewModel: ObservableObject {
     @Published var peekText: String = ""
+    /// Session announced by the current Peek: clicking the Peek activates it.
+    @Published var peekSessionID: String?
     @Published var compactStatus: String = "–"
+    @Published var compactTone: IslandController.CompactTone = .neutral
     /// True while the Island is expanded by hover (Extended mode, cards);
     /// false when an expansion shows a Peek.
     @Published var showCards: Bool = false
     @Published var cards: [SessionCard] = []
+    /// Click-to-focus: set by the controller, called by card/Peek taps.
+    var activateSession: ((String) -> Void)?
 }
 
 /// Expanded content: Session cards in Extended mode (hover), Peek text
@@ -206,6 +267,10 @@ struct SessionCardsView: View {
             }
             ForEach(model.cards) { card in
                 SessionCardView(card: card)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        model.activateSession?(card.id)
+                    }
             }
         }
         .padding(12)
@@ -279,6 +344,12 @@ struct PeekView: View {
             .lineLimit(1)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let sessionID = model.peekSessionID {
+                    model.activateSession?(sessionID)
+                }
+            }
     }
 }
 
@@ -292,9 +363,17 @@ struct CompactLeadingView: View {
 struct CompactTrailingView: View {
     @ObservedObject var model: IslandViewModel
 
+    private var tint: Color {
+        switch model.compactTone {
+        case .neutral: .white
+        case .waiting: .orange
+        case .finished: .green
+        }
+    }
+
     var body: some View {
         Text(model.compactStatus)
             .font(.system(size: 11, weight: .medium, design: .monospaced))
-            .foregroundStyle(.white)
+            .foregroundStyle(tint)
     }
 }

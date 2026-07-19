@@ -42,6 +42,8 @@ public enum AgentEventKind: Equatable, Sendable {
     case toolFinished(tool: String)
     /// The agent finished its turn (the Session stays alive, idle).
     case turnEnded
+    /// The agent is blocked on the user (permission request or question).
+    case waitingForUser(message: String?)
     /// The Session closed for good: it disappears from the Island.
     case sessionEnded
 }
@@ -55,4 +57,6 @@ public enum SessionState: Equatable, Sendable {
     case running
     /// Turn finished (the "agent done" state the Peek announces).
     case ended
+    /// Blocked on the user: permission request or question ("attend").
+    case waiting
 }

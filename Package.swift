@@ -24,14 +24,25 @@ let package = Package(
         // Installs/uninstalls the Claude Code hooks in ~/.claude/settings.json
         // (additive merge, timestamped backup, idempotent — ADR-0001).
         .target(name: "IslandInstaller"),
+        // Liseré (issue #8): full-screen click-through glow window, orange when
+        // a Session waits, green when one finished, until Acknowledgement.
+        .target(name: "IslandGlow", dependencies: ["IslandStore"]),
+        // Click-to-focus (issue #10): brings the Session's terminal frontmost
+        // and acknowledges on terminal focus.
+        .target(name: "IslandFocus", dependencies: ["IslandStore"]),
         // Floating Island UI (DynamicNotchKit): compact bar + peek on events.
         .target(name: "IslandUI", dependencies: ["IslandStore", "DynamicNotchKit"]),
         // App executable wiring server + adapter + store + UI.
         .executableTarget(
             name: "Island",
-            dependencies: ["IslandStore", "ClaudeCodeAdapter", "IslandServer", "IslandUI", "IslandInstaller"]
+            dependencies: [
+                "IslandStore", "ClaudeCodeAdapter", "IslandServer", "IslandUI",
+                "IslandInstaller", "IslandGlow", "IslandFocus",
+            ]
         ),
         .testTarget(name: "IslandStoreTests", dependencies: ["IslandStore"]),
+        .testTarget(name: "IslandGlowTests", dependencies: ["IslandGlow", "IslandStore"]),
+        .testTarget(name: "IslandFocusTests", dependencies: ["IslandFocus", "IslandStore"]),
         .testTarget(name: "IslandInstallerTests", dependencies: ["IslandInstaller"]),
         // Pure presentation logic only (labels, glyphs, durations) — the
         // SwiftUI rendering itself is checked visually, never by tests.
