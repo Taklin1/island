@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.8
+
+- #33 Réparé le click-to-focus : le premier clic sur une carte (ou le Peek) ramène Ghostty au premier plan du premier coup, même quand l'Island n'est pas l'app active — via `acceptsFirstMouse` sur le contenu du panneau vendoré non-activant, sans jamais rendre l'Island activante (ciblage de la fenêtre/onglet exact = v1.5, suivi en #36).
+
 ## 0.1.7
 
 - #11 Sprites pixel-art animés par Session (planche « Bots » + logo île + glyphes d'état des cartes Étendues, sheets embarquées, moteur SpriteView, mapping états → animations, teintes #8 portées par le Sprite).
