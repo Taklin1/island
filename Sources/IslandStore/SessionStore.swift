@@ -16,6 +16,9 @@ public struct Session: Identifiable, Equatable, Sendable {
     public var currentTool: String?
     /// When the current turn started (for the elapsed-time display).
     public var turnStartedAt: Date?
+    /// Summary of the last finished turn (ADR-0002), when extraction worked.
+    /// Cleared as soon as a new prompt starts the next turn.
+    public var lastSummary: TurnSummary?
     /// Last time any event touched this session (drives orphan expiry).
     public var lastActivityAt: Date
 
@@ -33,6 +36,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         lastPrompt: String? = nil,
         currentTool: String? = nil,
         turnStartedAt: Date? = nil,
+        lastSummary: TurnSummary? = nil,
         lastActivityAt: Date = Date()
     ) {
         self.id = id
@@ -42,6 +46,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         self.lastPrompt = lastPrompt
         self.currentTool = currentTool
         self.turnStartedAt = turnStartedAt
+        self.lastSummary = lastSummary
         self.lastActivityAt = lastActivityAt
     }
 }
@@ -128,6 +133,7 @@ public final class SessionStore: ObservableObject {
             session.lastPrompt = prompt
             session.currentTool = nil
             session.turnStartedAt = timestamp
+            session.lastSummary = nil
         case let .toolStarted(tool):
             session.state = .running
             session.currentTool = tool
@@ -140,6 +146,7 @@ public final class SessionStore: ObservableObject {
             session.state = .ended
             session.currentTool = nil
             session.turnStartedAt = nil
+            session.lastSummary = event.summary
         }
 
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {

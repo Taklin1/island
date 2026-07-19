@@ -191,7 +191,12 @@ public final class IslandController {
     /// Never fights the Extended mode: while hovered, no Peek.
     private func peek(for session: Session) {
         guard mode != .expandedHover else { return }
-        viewModel.peekText = "\(session.projectName) ✓ terminé"
+        // First line of the turn summary (ADR-0002); falls back to the bare
+        // "terminé" when the transcript could not be summarized.
+        viewModel.peekText = SessionCard.peekLine(
+            project: session.projectName,
+            summaryText: session.lastSummary?.text
+        )
 
         peekTask?.cancel()
         mode = .peek
@@ -224,6 +229,9 @@ public final class IslandController {
                 var parts = "\(session.projectName)[\(session.id)]=\(session.state)"
                 if let tool = session.currentTool {
                     parts += "(\(tool))"
+                }
+                if session.lastSummary != nil {
+                    parts += "+summary"
                 }
                 return parts
             }
@@ -333,6 +341,19 @@ struct SessionCardView: View {
                 Text("outil : \(tool)")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.orange)
+                    .lineLimit(1)
+            }
+            if let summary = card.summaryText {
+                Text(summary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(6)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let facts = card.summaryFacts {
+                Text(facts)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             // Quotas (issue #9): per-Session context usage from the tee.

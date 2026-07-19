@@ -25,6 +25,7 @@ public enum ClaudeCodeAdapter {
         guard payload.agentID == nil else { return nil }
 
         let kind: AgentEventKind
+        var summary: TurnSummary?
         switch payload.hookEventName {
         case "SessionStart":
             kind = .sessionStarted
@@ -41,6 +42,13 @@ public enum ClaudeCodeAdapter {
             kind = .toolFinished(tool: tool)
         case "Stop":
             kind = .turnEnded
+            // ADR-0002: summarize the turn by local extraction from the
+            // transcript. Best-effort only — on any failure the event still
+            // flows without a summary (fallback: state + project).
+            if let path = payload.transcriptPath {
+                summary = TranscriptReader.summary(
+                    ofTranscriptAt: URL(fileURLWithPath: path))
+            }
         default:
             // SubagentStart/SubagentStop (and any future unhandled hook) are
             // deliberately ignored.
@@ -51,7 +59,8 @@ public enum ClaudeCodeAdapter {
             sessionID: payload.sessionID,
             kind: kind,
             cwd: payload.cwd,
-            agent: agentName
+            agent: agentName,
+            summary: summary
         )
     }
 
@@ -60,6 +69,7 @@ public enum ClaudeCodeAdapter {
     private struct HookPayload: Decodable {
         let sessionID: String
         let hookEventName: String
+        let transcriptPath: String?
         let cwd: String?
         let prompt: String?
         let toolName: String?
@@ -69,6 +79,7 @@ public enum ClaudeCodeAdapter {
         enum CodingKeys: String, CodingKey {
             case sessionID = "session_id"
             case hookEventName = "hook_event_name"
+            case transcriptPath = "transcript_path"
             case cwd
             case prompt
             case toolName = "tool_name"
