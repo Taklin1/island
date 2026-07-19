@@ -37,9 +37,11 @@ Issu du grill de #34 (Loïc, 2026-07-19).
   texte finit sur `?` » au `Stop` et porte ce fait sur l'événement de fin de tour
   (p. ex. `.turnEnded(awaitsReply:)`) ; le **Store** le *résout* en `.waiting`
   (orange) ou `.ended` (vert). La décision vit dans le Store parce que c'est là
-  qu'est le gate sous-agents de #31 : un `Stop` avec un sous-agent actif reste
-  `running`, et la complétion différée (dernier `SubagentStop`) hérite du même
-  choix « question ⇒ attend ». L'état résultant de « à toi » est le `.waiting`
+  qu'est le gate sous-agents. **Correction (#48, voir ADR-0008)** : la question
+  **l'emporte** — un `Stop` finissant sur `?` passe `waiting` (orange)
+  **immédiatement**, même avec un Sous-agent actif ; être attendu par toi prime.
+  Le gate sous-agents ne concerne que le **vert** (« terminé »), pas l'orange.
+  L'état résultant de « à toi » est le `.waiting`
   **existant** — aucun état vert distinct, aucune annotation persistante.
   Émettre `.waitingForUser` directement depuis l'Adaptateur contournerait le gate
   et afficherait orange pendant que les sous-agents tournent : à éviter.
@@ -53,3 +55,18 @@ Issu du grill de #34 (Loïc, 2026-07-19).
 - **Bonus quasi-gratuit** : `lastSummary.text` (déjà stocké au `Stop`) porte la
   question, donc le Peek d'un `waiting`-par-question peut l'afficher (« projet ·
   attend : "…?" ») sans ouvrir le terminal.
+
+## Correction (grill #48, 2026-07-19)
+
+L'énoncé initial « un `Stop`-sur-`?` avec sous-agent actif reste `running`, la
+complétion différée héritant du choix » reposait sur un gate sous-agents supposé
+fonctionnel. Or (découvert au FP de #39, prouvé par capture des vrais hooks) le
+gate n'a **jamais** tourné en prod : `SubagentStart`/`SubagentStop` ne sont pas
+installés, et le sous-agent réel est l'outil `Agent` (background, même
+`session_id`, distingué par `agent_id`) — pas `Task`/`SubagentStop`. En
+retravaillant le gate (#48, ADR-0008), on tranche : **la question l'emporte
+toujours** — orange immédiat même avec un Sous-agent actif. Le gate « pas
+terminée tant qu'un Sous-agent tourne » ne s'applique qu'au **constat** (vert).
+Ça reflète aussi le comportement déjà validé par Loïc au FP de #39 (question +
+sous-agent → orange), qui fonctionnait *de facto* parce que les Sous-agents
+n'étaient pas comptés.

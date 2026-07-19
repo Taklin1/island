@@ -9,8 +9,12 @@ Le panneau flottant en haut-centre de l'écran, **masqué par défaut** : il ne 
 _Avoid_ : notch, encoche, widget
 
 **Session** :
-Une conversation Claude Code vivante (un `session_id` des hooks), rattachée à un projet (cwd) et à un terminal.
+Une conversation Claude Code vivante (un `session_id` des hooks), rattachée à un projet (cwd) et à un terminal. Peut porter plusieurs agents à la fois : l'agent principal (hooks à `agent_id` vide) et un ou plusieurs Sous-agents.
 _Avoid_ : agent (réservé à l'acteur qui produit le travail), conversation
+
+**Sous-agent** :
+Un acteur secondaire travaillant sous la MÊME Session que l'agent principal — même `session_id`, distingué par un `agent_id` propre (p. ex. l'outil `Agent`). Il ne crée **pas** de Session ni de carte à lui. Sa seule empreinte sur l'Island : tant qu'au moins un Sous-agent tourne, la Session reste « en cours » (jamais « terminée »).
+_Avoid_ : session (réservé au `session_id`), agent (l'acteur générique)
 
 **Événement** :
 Fait typé reçu par le Serveur local (hook ou statusline) qui fait évoluer l'état d'une Session : démarrée, en cours, terminée, en attente, fermée.
