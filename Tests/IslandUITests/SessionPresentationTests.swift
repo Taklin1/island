@@ -8,17 +8,8 @@ import IslandStore
 /// are plain functions and are tested here.
 @MainActor
 struct SessionPresentationTests {
-    @Test("The compact bar shows one glyph per Session, in order")
-    func compactStatusShowsOneEntryPerSession() {
-        let sessions = [
-            Session(id: "a", state: .running, agent: "claude-code"),
-            Session(id: "b", state: .idle, agent: "claude-code"),
-            Session(id: "c", state: .ended, agent: "claude-code"),
-        ]
-
-        #expect(IslandController.compactStatus(for: sessions) == "● ○ ✓")
-        #expect(IslandController.compactStatus(for: []) == "–")
-    }
+    // The compact bar itself is covered by SpriteTests (issue #11): one
+    // Sprite per Session, its animation encoding the state.
 
     @Test("A Session card carries project, French state, prompt and tool")
     func sessionCardCarriesTheExpandedFields() {
