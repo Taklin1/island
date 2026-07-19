@@ -92,3 +92,9 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
   Invalid argument` sur le binaire nu, code par ailleurs correct.
 - **Pourquoi** : justesse — sans cette note, chaque campagne re-signale un faux
   échec du login item.
+- **Levée (packaging, 2026-07-19)** : depuis le vrai bundle `island.app`
+  (`scripts/package_app.sh`, ad-hoc, installé dans `~/Applications`),
+  `register()` réussit — trace `island: login item registered` et entrée BTM
+  `com.taklin.island → ~/Applications/island.app` (`sfltool dumpbtm | grep -i
+  island`). Tester le login item = lancer le `.app` empaqueté, jamais le binaire
+  nu. Voir ADR-0005.
