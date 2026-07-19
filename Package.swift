@@ -33,6 +33,9 @@ let package = Package(
         ),
         .testTarget(name: "IslandStoreTests", dependencies: ["IslandStore"]),
         .testTarget(name: "IslandInstallerTests", dependencies: ["IslandInstaller"]),
+        // Pure presentation logic only (labels, glyphs, durations) — the
+        // SwiftUI rendering itself is checked visually, never by tests.
+        .testTarget(name: "IslandUITests", dependencies: ["IslandUI", "IslandStore"]),
         .testTarget(name: "ClaudeCodeAdapterTests", dependencies: ["ClaudeCodeAdapter"]),
         .testTarget(
             name: "IslandServerTests",

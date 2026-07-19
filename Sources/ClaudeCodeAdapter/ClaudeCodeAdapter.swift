@@ -20,18 +20,39 @@ public enum ClaudeCodeAdapter {
             return nil
         }
 
+        // Hooks fired inside a subagent carry an agent_id; subagents never
+        // create or drive a Session (only the main conversation does).
+        guard payload.agentID == nil else { return nil }
+
+        let kind: AgentEventKind
         switch payload.hookEventName {
+        case "SessionStart":
+            kind = .sessionStarted
+        case "SessionEnd":
+            kind = .sessionEnded
+        case "UserPromptSubmit":
+            guard let prompt = payload.prompt else { return nil }
+            kind = .promptSubmitted(prompt: prompt)
+        case "PreToolUse":
+            guard let tool = payload.toolName else { return nil }
+            kind = .toolStarted(tool: tool)
+        case "PostToolUse":
+            guard let tool = payload.toolName else { return nil }
+            kind = .toolFinished(tool: tool)
         case "Stop":
-            return AgentEvent(
-                sessionID: payload.sessionID,
-                state: .ended,
-                cwd: payload.cwd,
-                agent: agentName
-            )
+            kind = .turnEnded
         default:
-            // SubagentStop (and any future unhandled hook) is deliberately ignored.
+            // SubagentStart/SubagentStop (and any future unhandled hook) are
+            // deliberately ignored.
             return nil
         }
+
+        return AgentEvent(
+            sessionID: payload.sessionID,
+            kind: kind,
+            cwd: payload.cwd,
+            agent: agentName
+        )
     }
 
     /// Subset of the Claude Code hook stdin payload this slice cares about.
@@ -40,11 +61,18 @@ public enum ClaudeCodeAdapter {
         let sessionID: String
         let hookEventName: String
         let cwd: String?
+        let prompt: String?
+        let toolName: String?
+        /// Present only when the hook fires inside a subagent call.
+        let agentID: String?
 
         enum CodingKeys: String, CodingKey {
             case sessionID = "session_id"
             case hookEventName = "hook_event_name"
             case cwd
+            case prompt
+            case toolName = "tool_name"
+            case agentID = "agent_id"
         }
     }
 }
