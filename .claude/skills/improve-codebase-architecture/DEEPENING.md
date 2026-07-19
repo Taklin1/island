@@ -6,6 +6,8 @@ How to deepen a cluster of shallow modules safely, given its dependencies. Assum
 
 When assessing a candidate for deepening, classify its dependencies. The category determines how the deepened module is tested across its seam.
 
+island is overwhelmingly **in-process** (category 1): a pure reducer turning hook events into published Session state, held in memory, with no database and no remote backend. Its real boundaries are few — the hook event ingress, the clock, system notifications, and the SwiftUI rendering. Expect most candidates to fall in category 1; reach for a port only where a genuine boundary varies (categories 3 and 4 are mostly hypothetical here until such a dependency is added).
+
 ### 1. In-process
 
 Pure computation, in-memory state, no I/O. Always deepenable — merge the modules and test through the new interface directly. No adapter needed.
