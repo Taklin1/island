@@ -175,13 +175,18 @@ struct ClaudeCodeAdapterTests {
         #expect(event.summary == nil)
     }
 
-    @Test("SubagentStop hook payload is ignored")
-    func subagentStopIsIgnored() {
-        #expect(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.subagentStop) == nil)
+    @Test("SubagentStop becomes a 'subagent stopped' event on the PARENT session")
+    func subagentStopBecomesSubagentStopped() throws {
+        // The payload carries an agent_id, yet it targets the parent session_id
+        // (#31): it decrements the parent's count, it never creates a Session.
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.subagentStop))
+
+        #expect(event.sessionID == "abc123")
+        #expect(event.kind == .subagentStopped)
     }
 
-    @Test("SubagentStart hook payload is ignored")
-    func subagentStartIsIgnored() {
+    @Test("SubagentStart becomes a 'subagent started' event on the PARENT session")
+    func subagentStartBecomesSubagentStarted() throws {
         let fixture = Data("""
         {
           "session_id": "abc123",
@@ -193,7 +198,10 @@ struct ClaudeCodeAdapterTests {
         }
         """.utf8)
 
-        #expect(ClaudeCodeAdapter.event(fromHookPayload: fixture) == nil)
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: fixture))
+
+        #expect(event.sessionID == "abc123")
+        #expect(event.kind == .subagentStarted)
     }
 
     @Test("Tool events fired inside a subagent (agent_id present) are ignored")
@@ -238,6 +246,73 @@ struct ClaudeCodeAdapterTests {
           "hook_event_name": "Notification",
           "notification_type": "auth_success",
           "message": "Authentication successful"
+        }
+        """.utf8)
+
+        #expect(ClaudeCodeAdapter.event(fromHookPayload: fixture) == nil)
+    }
+
+    @Test("The idle notification (idle_prompt) is non-blocking and never waits")
+    func idleNotificationIsNonBlocking() {
+        // Root cause A (#31): the ~60 s idle notification fires the Notification
+        // hook too, but it must NOT put the Session in "?".
+        let fixture = Data("""
+        {
+          "session_id": "abc123",
+          "transcript_path": "/tmp/abc123.jsonl",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Notification",
+          "notification_type": "idle_prompt",
+          "message": "Claude is waiting for your input"
+        }
+        """.utf8)
+
+        #expect(ClaudeCodeAdapter.event(fromHookPayload: fixture) == nil)
+    }
+
+    @Test("A question notification (elicitation_dialog) becomes a 'waiting for user' event")
+    func elicitationDialogBecomesWaitingForUser() throws {
+        let fixture = Data("""
+        {
+          "session_id": "abc123",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Notification",
+          "notification_type": "elicitation_dialog",
+          "message": "The MCP server needs some information"
+        }
+        """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: fixture))
+        #expect(event.kind == .waitingForUser(message: "The MCP server needs some information"))
+    }
+
+    @Test("Notification without a type: a permission message still waits (message fallback)")
+    func typelessPermissionNotificationWaits() throws {
+        // Older builds may omit notification_type; the adapter then reads the
+        // message text (#31): a permission ask still blocks.
+        let fixture = Data("""
+        {
+          "session_id": "abc123",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Notification",
+          "message": "Claude needs your permission to use Bash"
+        }
+        """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: fixture))
+        #expect(event.kind == .waitingForUser(message: "Claude needs your permission to use Bash"))
+    }
+
+    @Test("Notification without a type: an idle message stays non-blocking (message fallback)")
+    func typelessIdleNotificationIsNonBlocking() {
+        // The crux of root cause A: a typeless idle notification must NOT be
+        // treated as blocking (the old `guard let type else { return true }`).
+        let fixture = Data("""
+        {
+          "session_id": "abc123",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Notification",
+          "message": "Claude is waiting for your input"
         }
         """.utf8)
 

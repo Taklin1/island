@@ -125,12 +125,12 @@ struct LocalServerTests {
         #expect(byID["s2"]?.state == .running)
     }
 
-    @Test("A SubagentStop fixture is acknowledged but publishes nothing")
-    func subagentStopIsIgnored() async throws {
+    @Test("A SubagentStop with no known parent Session creates no Session (#31)")
+    func subagentStopWithNoParentCreatesNoSession() async throws {
         let harness = try await ServerHarness()
         let fixture = Self.stopFixture.replacingOccurrences(
             of: #""hook_event_name": "Stop""#,
-            with: #""hook_event_name": "SubagentStop""#
+            with: #""hook_event_name": "SubagentStop", "agent_id": "sub-1""#
         )
 
         let (status, _) = try await harness.postHook(fixture, token: harness.token)
@@ -138,6 +138,61 @@ struct LocalServerTests {
         #expect(status == 200)
         try await Task.sleep(for: .milliseconds(100))
         #expect(harness.store.sessions.isEmpty)
+    }
+
+    @Test("An idle notification never resurrects an ended Session into '?' (#31)")
+    func idleNotificationLeavesEndedSessionTerminated() async throws {
+        let harness = try await ServerHarness()
+
+        _ = try await harness.postHook(Self.stopFixture, token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .ended }
+
+        // The ~60 s idle notification fires the Notification hook on the same
+        // Session: it must leave the finished turn "terminé", not turn it "?".
+        let idle = """
+        {
+          "session_id": "abc123",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Notification",
+          "notification_type": "idle_prompt",
+          "message": "Claude is waiting for your input"
+        }
+        """
+        _ = try await harness.postHook(idle, token: harness.token)
+
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(harness.store.sessions[0].state == .ended)
+    }
+
+    @Test("A Session with a subagent in flight is never 'terminée' until the last stops (#31)")
+    func subagentInFlightNeverShowsTerminatedEndToEnd() async throws {
+        let harness = try await ServerHarness()
+        func hook(_ eventName: String, extra: String = "") -> String {
+            """
+            {
+              "session_id": "sub-parent",
+              "transcript_path": "/tmp/sub-parent.jsonl",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "\(eventName)"\(extra)
+            }
+            """
+        }
+
+        _ = try await harness.postHook(hook("UserPromptSubmit", extra: #", "prompt": "Explore""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .running }
+
+        _ = try await harness.postHook(hook("SubagentStart", extra: #", "agent_id": "sub-1", "agent_type": "Explore""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.activeSubagentCount == 1 }
+
+        // Main Stop fires while the subagent is still running: stays running.
+        _ = try await harness.postHook(hook("Stop", extra: #", "last_assistant_message": "Working…""#), token: harness.token)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(harness.store.sessions[0].state == .running) // never terminée yet
+
+        // Last subagent stops → only now the turn is truly finished.
+        _ = try await harness.postHook(hook("SubagentStop", extra: #", "agent_id": "sub-1", "agent_type": "Explore""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .ended }
+        #expect(harness.store.sessions[0].activeSubagentCount == 0)
     }
 }
 

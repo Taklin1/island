@@ -5,8 +5,9 @@ import IslandStore
 /// ``AgentEvent`` values (ADR-0004).
 ///
 /// Everything specific to Claude Code (hook JSON shape, event names) stays
-/// behind this boundary. Payloads that carry no meaning for Island — such as
-/// `SubagentStop` — translate to `nil` and are silently ignored upstream.
+/// behind this boundary. Payloads that carry no meaning for Island — an
+/// unhandled hook, or a tool hook fired inside a subagent — translate to `nil`
+/// and are silently ignored upstream.
 public enum ClaudeCodeAdapter {
     /// Name reported in generic events for sessions driven by Claude Code.
     public static let agentName = "claude-code"
@@ -25,8 +26,21 @@ public enum ClaudeCodeAdapter {
             return nil
         }
 
-        // Hooks fired inside a subagent carry an agent_id; subagents never
-        // create or drive a Session (only the main conversation does).
+        // SubagentStart/SubagentStop carry the PARENT session_id *and* an
+        // agent_id; they never create a Session, they bump the parent's
+        // active-subagent count (#31). Handle them before the agent_id guard
+        // below, which drops the OTHER hooks fired inside a subagent.
+        switch payload.hookEventName {
+        case "SubagentStart":
+            return event(payload, kind: .subagentStarted)
+        case "SubagentStop":
+            return event(payload, kind: .subagentStopped)
+        default:
+            break
+        }
+
+        // Any other hook fired inside a subagent (agent_id present) is ignored:
+        // only the main conversation drives a Session's lifecycle.
         guard payload.agentID == nil else { return nil }
 
         let kind: AgentEventKind
@@ -56,17 +70,25 @@ public enum ClaudeCodeAdapter {
             }
         case "Notification":
             // Only notifications that actually block on the user (permission
-            // request, question) put the Session in waiting; informational
-            // ones (auth_success…) are ignored.
-            guard isWaitingNotification(payload.notificationType) else { return nil }
+            // request, question) put the Session in waiting; the idle
+            // notification and informational ones are ignored (#31).
+            guard isWaitingNotification(type: payload.notificationType, message: payload.message)
+            else { return nil }
             kind = .waitingForUser(message: payload.message)
         default:
-            // SubagentStart/SubagentStop (and any future unhandled hook) are
-            // deliberately ignored.
+            // Any future unhandled hook is deliberately ignored.
             return nil
         }
 
-        return AgentEvent(
+        return event(payload, kind: kind, summary: summary)
+    }
+
+    /// Builds a generic event from a decoded payload, filling in the v1
+    /// terminal/agent defaults (ADR-0004).
+    private static func event(
+        _ payload: HookPayload, kind: AgentEventKind, summary: TurnSummary? = nil
+    ) -> AgentEvent {
+        AgentEvent(
             sessionID: payload.sessionID,
             kind: kind,
             cwd: payload.cwd,
@@ -89,7 +111,11 @@ public enum ClaudeCodeAdapter {
         let agentID: String?
         /// Notification hook only: human-readable notification text.
         let message: String?
-        /// Notification hook only: e.g. "permission_prompt", "idle_prompt".
+        /// Notification hook only. Claude Code's Notification types include
+        /// `permission_prompt`, `idle_prompt`, `auth_success`,
+        /// `elicitation_dialog`/`_complete`/`_response`, `agent_needs_input`
+        /// and `agent_completed`. The field may be absent on older builds, so
+        /// the adapter also reads the `message` as a fallback (#31).
         let notificationType: String?
 
         enum CodingKeys: String, CodingKey {
@@ -105,15 +131,27 @@ public enum ClaudeCodeAdapter {
         }
     }
 
-    /// Whether a Notification actually blocks on the user. Unknown or absent
-    /// types are treated as blocking: better a Liseré to acknowledge than a
-    /// stuck agent nobody notices.
-    private static func isWaitingNotification(_ type: String?) -> Bool {
-        guard let type else { return true }
-        let nonBlocking: Set<String> = [
-            "auth_success", "elicitation_complete", "elicitation_response",
-            "agent_completed",
-        ]
-        return !nonBlocking.contains(type)
+    /// Whether a Notification actually blocks on the user — a permission
+    /// request or a question the agent cannot proceed without. Only those put
+    /// the Session in waiting ("?"); everything else, and notably the ~60 s
+    /// idle notification (`idle_prompt`), is non-blocking and must never mark
+    /// the Session (#31, root cause A).
+    ///
+    /// When the notification type is present we trust it: only the genuinely
+    /// blocking types wait. When it is absent we fall back to the message text
+    /// and default to non-blocking — a Notification we cannot positively read
+    /// as a permission/question must not raise a false "?" (this reverses the
+    /// old "unknown ⇒ blocking" default, which let idle resurrect Sessions).
+    private static func isWaitingNotification(type: String?, message: String?) -> Bool {
+        if let type {
+            let blocking: Set<String> = [
+                "permission_prompt", "elicitation_dialog", "agent_needs_input",
+            ]
+            return blocking.contains(type)
+        }
+        // No type: only a message that clearly asks for permission/approval
+        // blocks. Idle ("waiting for your input") and the rest do not.
+        guard let message = message?.lowercased() else { return false }
+        return message.contains("permission") || message.contains("approve")
     }
 }
