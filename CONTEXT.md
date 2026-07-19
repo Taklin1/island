@@ -50,3 +50,11 @@ Jauges d'usage Claude (fenêtres 5 h et 7 jours, % de contexte) reçues via le t
 
 **Click-to-focus** :
 Action de cliquer une carte de Session pour ramener le focus sur son terminal (Ghostty).
+
+**Réponse depuis l'Island** :
+Débloquer une Session « en attente » sans quitter l'Island, en injectant la frappe correspondant à l'option choisie (question ou permission) dans le terminal de cette Session.
+_Avoid_ : réponse inline, quick reply
+
+**Injection** :
+Envoi d'une frappe clavier au terminal d'une Session via l'API Accessibilité, effectué uniquement quand la fenêtre/onglet de cette Session est identifiée avec certitude.
+_Avoid_ : automation, simulation clavier
