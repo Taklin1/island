@@ -131,37 +131,40 @@ struct ClaudeCodeAdapterTests {
         #expect(event.kind == .toolFinished(tool: "Bash"))
     }
 
-    @Test("PreToolUse for the Task tool feeds the subagent gate, not a plain tool (#39/#31)")
-    func preToolUseTaskBecomesSubagentStarted() throws {
-        // island never installs SubagentStart/SubagentStop, so the subagent
-        // gate is fed from the Task tool's Pre/PostToolUse — the real hooks
-        // island receives on the main session.
+    @Test("A background subagent's tool hook (agent_id present) is ignored — it never touches the parent (#39 case 4)")
+    func subagentAgentIdToolHookIsIgnored() {
+        // Ground truth from a real case-4 capture: the background subagent (the
+        // `Agent`/Task tool) runs in its own session and every one of its tool
+        // hooks carries an agent_id. Those must be dropped so they never drive
+        // the parent Session — the parent resolves on its own Stop.
         let payload = Data("""
             {
-              "session_id": "abc123",
+              "session_id": "parent-abc",
               "cwd": "/Users/loic/Documents/island",
               "hook_event_name": "PreToolUse",
-              "tool_name": "Task",
-              "tool_input": {"subagent_type": "Explore"}
+              "tool_name": "Bash",
+              "agent_id": "aagent-bidon"
             }
             """.utf8)
-        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
-        #expect(event.kind == .subagentStarted)
+        #expect(ClaudeCodeAdapter.event(fromHookPayload: payload) == nil)
     }
 
-    @Test("PostToolUse for the Task tool ends a subagent, not a plain tool (#39/#31)")
-    func postToolUseTaskBecomesSubagentStopped() throws {
+    @Test("The Agent subagent-spawn tool is a plain tool on the main session (#39 case 4)")
+    func agentSpawnToolIsAPlainMainTool() throws {
+        // The real subagent spawner is the `Agent` tool; its PreToolUse fires on
+        // the MAIN session with NO agent_id, so it is a normal tool call — never
+        // a state-changing subagent event (this reverses the wrong Task gate).
         let payload = Data("""
             {
-              "session_id": "abc123",
+              "session_id": "parent-abc",
               "cwd": "/Users/loic/Documents/island",
-              "hook_event_name": "PostToolUse",
-              "tool_name": "Task",
-              "tool_input": {"subagent_type": "Explore"}
+              "hook_event_name": "PreToolUse",
+              "tool_name": "Agent",
+              "tool_input": {"description": "sub", "prompt": "…", "name": "x"}
             }
             """.utf8)
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
-        #expect(event.kind == .subagentStopped)
+        #expect(event.kind == .toolStarted(tool: "Agent"))
     }
 
     @Test("Stop hook payload becomes a generic 'turn ended' event")

@@ -17,12 +17,6 @@ public enum ClaudeCodeAdapter {
     /// tool-specific defaults never leak past the adapter).
     public static let defaultTerminal = "ghostty"
 
-    /// Claude Code's subagent-spawning tool. Its `PreToolUse`/`PostToolUse`
-    /// bracket a subagent's lifetime on the main session and feed the subagent
-    /// gate (#31) — because `SubagentStart`/`SubagentStop` are not installed as
-    /// island hooks (#39). Claude-Code-specific, so it stays behind the adapter.
-    static let subagentToolName = "Task"
-
     /// Translates a raw hook payload into a generic event.
     ///
     /// - Returns: the generic event, or `nil` when the payload is not valid
@@ -36,12 +30,6 @@ public enum ClaudeCodeAdapter {
         // agent_id; they never create a Session, they bump the parent's
         // active-subagent count (#31). Handle them before the agent_id guard
         // below, which drops the OTHER hooks fired inside a subagent.
-        //
-        // NB (#39): in practice island never receives these — `HookInstaller`
-        // installs 7 events and NOT SubagentStart/SubagentStop, so this branch
-        // is dead in production. The live subagent gate is fed instead from the
-        // Task tool's Pre/PostToolUse (see below), which island DOES install.
-        // This branch is kept (harmless) for adapters/tests that do emit them.
         switch payload.hookEventName {
         case "SubagentStart":
             return event(payload, kind: .subagentStarted)
@@ -52,7 +40,12 @@ public enum ClaudeCodeAdapter {
         }
 
         // Any other hook fired inside a subagent (agent_id present) is ignored:
-        // only the main conversation drives a Session's lifecycle.
+        // only the main conversation drives a Session's lifecycle. This is what
+        // makes background subagents safe: a real turn spawning a subagent (the
+        // `Agent`/Task tool) keeps a session of its own, and all of its tool
+        // hooks carry an agent_id — they are dropped here and never touch the
+        // parent, so the parent resolves purely on its own Stop (#39, verified
+        // on a real case-4 capture: the parent's question Stop wins, orange).
         guard payload.agentID == nil else { return nil }
 
         let kind: AgentEventKind
@@ -67,15 +60,10 @@ public enum ClaudeCodeAdapter {
             kind = .promptSubmitted(prompt: prompt)
         case "PreToolUse":
             guard let tool = payload.toolName else { return nil }
-            // The Task tool spawns a subagent on THIS (main) session. Since
-            // island never installs SubagentStart/SubagentStop, the #31 gate is
-            // fed here instead — from the Task tool's Pre/PostToolUse, which
-            // island DOES receive on the main session (agent_id == nil). Any
-            // other tool keeps its plain toolStarted/toolFinished (#39).
-            kind = tool == subagentToolName ? .subagentStarted : .toolStarted(tool: tool)
+            kind = .toolStarted(tool: tool)
         case "PostToolUse":
             guard let tool = payload.toolName else { return nil }
-            kind = tool == subagentToolName ? .subagentStopped : .toolFinished(tool: tool)
+            kind = .toolFinished(tool: tool)
         case "Stop":
             // ADR-0002: summarize the turn by local extraction from the
             // transcript (todos, files, duration, and the last message text).

@@ -375,93 +375,75 @@ struct LocalServerTests {
         #expect(session.lastSummary?.text == "Postgres or SQLite — which do you want?")
     }
 
-    // MARK: - Subagent gate fed by the REAL installed hooks (Task Pre/PostToolUse, #39/#31)
+    // MARK: - Case 4 replayed from the REAL capture: an Agent background subagent (#39)
 
-    /// Builds a hook for the shared "task1" session. island receives the Task
-    /// tool's Pre/PostToolUse on the MAIN session (agent_id absent) — the real
-    /// signal the subagent gate is wired to, since SubagentStart/SubagentStop
-    /// are never installed.
-    private func taskHook(_ event: String, extra: String = "") -> String {
-        """
-        {
-          "session_id": "task1",
-          "transcript_path": "/tmp/task1.jsonl",
-          "cwd": "/Users/loic/Documents/island",
-          "hook_event_name": "\(event)"\(extra)
+    @Test("REAL CAPTURE: an Agent-subagent turn ending on a question publishes waiting, the subagent's own hooks ignored (#39 case 4)")
+    func agentSubagentTurnEndingOnQuestionWaits() async throws {
+        let harness = try await ServerHarness()
+        let p = "parent-ed31"
+        func hook(_ event: String, extra: String = "") -> String {
+            """
+            {
+              "session_id": "\(p)",
+              "transcript_path": "/tmp/\(p).jsonl",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "\(event)"\(extra)
+            }
+            """
         }
-        """
-    }
 
-    @Test("REAL HOOKS: a constat Stop while a Task subagent is in flight is gated to running, not green (#39/#31)")
-    func taskInFlightGatesConstatStopFromGreen() async throws {
-        let harness = try await ServerHarness()
-
-        _ = try await harness.postHook(taskHook("UserPromptSubmit", extra: #", "prompt": "Explore then report""#), token: harness.token)
+        // The exact captured case-4 sequence (session ed31cce6, log lines
+        // 141-155): a prompt, the `Agent` background-subagent spawn tool (a
+        // plain main-session tool — NOT the never-installed SubagentStart, NOT
+        // the wrongly-guessed Task gate), the subagent's own tool hook carrying
+        // an agent_id (dropped), then the main Stop carrying the question.
+        _ = try await harness.postHook(hook("UserPromptSubmit", extra: #", "prompt": "lance un sous-agent et termine par une question""#), token: harness.token)
         try await harness.waitUntil { $0.sessions.first?.state == .running }
 
-        // The Task tool spawns a subagent on the main session.
-        _ = try await harness.postHook(taskHook("PreToolUse", extra: #", "tool_name": "Task", "tool_input": {"subagent_type": "Explore"}"#), token: harness.token)
-        try await harness.waitUntil { $0.sessions.first?.activeSubagentCount == 1 }
-        #expect(harness.store.sessions[0].state == .running)
+        _ = try await harness.postHook(hook("PreToolUse", extra: #", "tool_name": "Agent", "tool_input": {"description": "sous-agent bidon"}"#), token: harness.token)
+        _ = try await harness.postHook(hook("PostToolUse", extra: #", "tool_name": "Agent""#), token: harness.token)
 
-        // A Stop arrives while the Task is still in flight (a subagent Stop
-        // attributed to the parent, or an early main Stop). It MUST be gated —
-        // this is the "always green with a subagent" bug. Without the Task
-        // routing the counter stays 0 and this Stop turns the Session .ended.
-        _ = try await harness.postHook(taskHook("Stop", extra: #", "last_assistant_message": "Explored the modules.""#), token: harness.token)
-        try await Task.sleep(for: .milliseconds(120))
-        #expect(harness.store.sessions[0].state == .running)  // KEY: never green while the subagent runs
+        // The background subagent's own tool call (agent_id present) must be
+        // dropped — never touching the parent (log lines 175/179/193/194).
+        _ = try await harness.postHook(hook("PreToolUse", extra: #", "tool_name": "Bash", "agent_id": "aagent-bidon""#), token: harness.token)
 
-        // The Task returns: the turn truly ended on a constat → green now.
-        _ = try await harness.postHook(taskHook("PostToolUse", extra: #", "tool_name": "Task", "tool_input": {"subagent_type": "Explore"}"#), token: harness.token)
+        // The main agent asks its question and stops. The transcript may lag, so
+        // the question rides on last_assistant_message (the #39 real fix): the
+        // parent resolves ORANGE on its OWN Stop, regardless of the subagent.
+        _ = try await harness.postHook(hook("Stop", extra: #", "last_assistant_message": "tu veux que je l'arrête tout de suite ?""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .waiting }
+
+        #expect(harness.store.sessions.count == 1)  // the agent_id hook created no second Session
+        let session = try #require(harness.store.sessions.first)
+        #expect(session.state == .waiting)
+        #expect(session.needsAcknowledgement)
+        #expect(session.lastSummary?.text == "tu veux que je l'arrête tout de suite ?")
+    }
+
+    @Test("REAL CAPTURE: an Agent-subagent turn ending on a constat publishes ended (#39 case 4 contrast)")
+    func agentSubagentTurnEndingOnConstatEnds() async throws {
+        let harness = try await ServerHarness()
+        let p = "parent-ed32"
+        func hook(_ event: String, extra: String = "") -> String {
+            """
+            {
+              "session_id": "\(p)",
+              "transcript_path": "/tmp/\(p).jsonl",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "\(event)"\(extra)
+            }
+            """
+        }
+
+        _ = try await harness.postHook(hook("UserPromptSubmit", extra: #", "prompt": "lance un sous-agent et ne termine PAS par une question""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .running }
+        _ = try await harness.postHook(hook("PreToolUse", extra: #", "tool_name": "Agent""#), token: harness.token)
+        _ = try await harness.postHook(hook("PostToolUse", extra: #", "tool_name": "Agent""#), token: harness.token)
+        _ = try await harness.postHook(hook("PreToolUse", extra: #", "tool_name": "Bash", "agent_id": "aagent-bidon""#), token: harness.token)
+        _ = try await harness.postHook(hook("Stop", extra: #", "last_assistant_message": "Dis-moi quand tu veux que je l'arrête.""#), token: harness.token)
+
         try await harness.waitUntil { $0.sessions.first?.state == .ended }
-        #expect(harness.store.sessions[0].activeSubagentCount == 0)
-    }
-
-    @Test("REAL HOOKS: a final question with a Task subagent in flight waits only after the Task returns (#39/#31)")
-    func taskInFlightQuestionWaitsAfterTaskReturns() async throws {
-        let harness = try await ServerHarness()
-
-        _ = try await harness.postHook(taskHook("UserPromptSubmit", extra: #", "prompt": "Explore then ask me""#), token: harness.token)
-        try await harness.waitUntil { $0.sessions.first?.state == .running }
-
-        _ = try await harness.postHook(taskHook("PreToolUse", extra: #", "tool_name": "Task", "tool_input": {"subagent_type": "Explore"}"#), token: harness.token)
-        try await harness.waitUntil { $0.sessions.first?.activeSubagentCount == 1 }
-
-        // A Stop ending on a question arrives while the Task is in flight: per
-        // ADR-0006 it stays running (gate #31), not orange yet. Without the Task
-        // routing it would flip to .waiting immediately (counter 0).
-        _ = try await harness.postHook(taskHook("Stop", extra: #", "last_assistant_message": "Ready to merge — proceed?""#), token: harness.token)
-        try await Task.sleep(for: .milliseconds(120))
-        #expect(harness.store.sessions[0].state == .running)  // gated while the subagent runs
-
-        // The Task returns → the deferred completion inherits the question via
-        // this REAL path (PostToolUse Task, not SubagentStop) → orange.
-        _ = try await harness.postHook(taskHook("PostToolUse", extra: #", "tool_name": "Task", "tool_input": {"subagent_type": "Explore"}"#), token: harness.token)
-        try await harness.waitUntil { $0.sessions.first?.state == .waiting }
-        #expect(harness.store.sessions[0].needsAcknowledgement)
-        #expect(harness.store.sessions[0].lastSummary?.text == "Ready to merge — proceed?")
-    }
-
-    @Test("REAL HOOKS: a Task that returns before the main Stop ends the turn normally (non-regression, #39/#31)")
-    func taskReturnsBeforeMainStopEndsNormally() async throws {
-        let harness = try await ServerHarness()
-
-        _ = try await harness.postHook(taskHook("UserPromptSubmit", extra: #", "prompt": "Explore""#), token: harness.token)
-        try await harness.waitUntil { $0.sessions.first?.state == .running }
-
-        _ = try await harness.postHook(taskHook("PreToolUse", extra: #", "tool_name": "Task", "tool_input": {"subagent_type": "Explore"}"#), token: harness.token)
-        try await harness.waitUntil { $0.sessions.first?.activeSubagentCount == 1 }
-
-        // The common ordering: the Task returns BEFORE the main agent stops.
-        _ = try await harness.postHook(taskHook("PostToolUse", extra: #", "tool_name": "Task", "tool_input": {"subagent_type": "Explore"}"#), token: harness.token)
-        try await harness.waitUntil { $0.sessions.first?.activeSubagentCount == 0 }
-        #expect(harness.store.sessions[0].state == .running)  // no Stop yet → still working
-
-        // The main agent asks its question and stops → orange, resolved directly.
-        _ = try await harness.postHook(taskHook("Stop", extra: #", "last_assistant_message": "Which option do you prefer?""#), token: harness.token)
-        try await harness.waitUntil { $0.sessions.first?.state == .waiting }
-        #expect(harness.store.sessions[0].lastSummary?.text == "Which option do you prefer?")
+        #expect(harness.store.sessions.count == 1)
     }
 }
 
