@@ -87,7 +87,13 @@ public enum AgentEventKind: Equatable, Sendable {
     /// The tool finished; the agent keeps working on the turn.
     case toolFinished(tool: String)
     /// The agent finished its turn (the Session stays alive, idle).
-    case turnEnded
+    ///
+    /// `awaitsReply` is the adapter's local reading of whether the last
+    /// assistant message ended on a question (`?`, issue #39 / ADR-0006): the
+    /// store resolves it — after the subagent gate — to `.waiting` (orange)
+    /// rather than `.ended` (green). The adapter only *detects*; it never emits
+    /// `.waitingForUser` directly, which would bypass the subagent gate.
+    case turnEnded(awaitsReply: Bool)
     /// A subagent started under this Session. Subagents never create their own
     /// Session; they only bump the parent's active-subagent count (issue #31).
     case subagentStarted

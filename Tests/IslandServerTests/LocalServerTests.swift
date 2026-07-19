@@ -249,6 +249,103 @@ struct LocalServerTests {
         try await harness.waitUntil { $0.sessions.first?.state == .ended }
         #expect(harness.store.sessions[0].activeSubagentCount == 0)
     }
+
+    // MARK: - A turn ending on a question is "attend", not "terminé" (issue #39)
+
+    /// Writes a one-turn transcript whose last assistant message is `lastText`
+    /// and returns its URL — the adapter reads the question from the transcript
+    /// (ADR-0002), not from the hook's `last_assistant_message` field.
+    private func writeTranscript(lastAssistantText: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("island-q-\(UUID().uuidString).jsonl")
+        let encoded = String(data: try JSONEncoder().encode(lastAssistantText), encoding: .utf8)!
+        try Data("""
+            {"isSidechain":false,"type":"user","message":{"role":"user","content":"Go"},"uuid":"u-1","timestamp":"2026-07-19T10:00:00.000Z"}
+            {"isSidechain":false,"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":\(encoded)}]},"uuid":"a-1","timestamp":"2026-07-19T10:00:42.000Z"}
+            """.utf8).write(to: url)
+        return url
+    }
+
+    @Test("End to end: a turn ending on a question publishes a waiting Session, not terminated (#39)")
+    func stopEndingOnQuestionPublishesWaitingSession() async throws {
+        let harness = try await ServerHarness()
+        let transcript = try writeTranscript(
+            lastAssistantText: "I can target Postgres or SQLite. Which do you want?")
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let fixture = """
+        {
+          "session_id": "q1",
+          "transcript_path": "\(transcript.path)",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Stop"
+        }
+        """
+
+        _ = try await harness.postHook(fixture, token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .waiting }
+
+        let session = try #require(harness.store.sessions.first)
+        #expect(session.state == .waiting)        // orange, "attend" — not green
+        #expect(session.needsAcknowledgement)     // the Liseré lights
+        // The question is kept so the Peek can show it (« projet · attend : "…?" »).
+        #expect(session.lastSummary?.text == "I can target Postgres or SQLite. Which do you want?")
+    }
+
+    @Test("End to end: a turn ending on a constat still publishes a terminated Session (#39)")
+    func stopEndingOnConstatPublishesTerminatedSession() async throws {
+        let harness = try await ServerHarness()
+        let transcript = try writeTranscript(lastAssistantText: "Done — the release is tagged.")
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let fixture = """
+        {
+          "session_id": "c1",
+          "transcript_path": "\(transcript.path)",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Stop"
+        }
+        """
+
+        _ = try await harness.postHook(fixture, token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .ended }
+        #expect(harness.store.sessions[0].state == .ended)
+    }
+
+    @Test("End to end: a final question with a subagent in flight waits only after the last SubagentStop (#39)")
+    func questionWithSubagentWaitsAfterLastSubagentStopEndToEnd() async throws {
+        let harness = try await ServerHarness()
+        let transcript = try writeTranscript(lastAssistantText: "Ready to merge — proceed?")
+        defer { try? FileManager.default.removeItem(at: transcript) }
+        func hook(_ eventName: String, transcriptPath: String = "/tmp/qsub.jsonl", extra: String = "") -> String {
+            """
+            {
+              "session_id": "qsub",
+              "transcript_path": "\(transcriptPath)",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "\(eventName)"\(extra)
+            }
+            """
+        }
+
+        _ = try await harness.postHook(hook("UserPromptSubmit", extra: #", "prompt": "Prepare the merge""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .running }
+
+        _ = try await harness.postHook(hook("SubagentStart", extra: #", "agent_id": "sub-1", "agent_type": "Explore""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.activeSubagentCount == 1 }
+
+        // Main Stop ends on a question while the subagent is still running: the
+        // gate (#31) keeps it running — never orange mid-work.
+        _ = try await harness.postHook(hook("Stop", transcriptPath: transcript.path), token: harness.token)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(harness.store.sessions[0].state == .running)
+
+        // Last subagent stops: the deferred completion inherits the question
+        // and waits (orange), it does not end (green).
+        _ = try await harness.postHook(hook("SubagentStop", extra: #", "agent_id": "sub-1", "agent_type": "Explore""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .waiting }
+        #expect(harness.store.sessions[0].needsAcknowledgement)
+    }
 }
 
 /// Boots a LocalServer on an ephemeral port, wired exactly like the app:

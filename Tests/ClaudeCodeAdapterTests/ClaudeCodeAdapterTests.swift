@@ -136,7 +136,7 @@ struct ClaudeCodeAdapterTests {
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))
 
         #expect(event.sessionID == "abc123")
-        #expect(event.kind == .turnEnded)
+        #expect(event.kind == .turnEnded(awaitsReply: false))
         #expect(event.cwd == "/Users/loic/Documents/island")
         #expect(event.agent == "claude-code")
     }
@@ -161,7 +161,7 @@ struct ClaudeCodeAdapterTests {
             """.utf8)
 
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
-        #expect(event.kind == .turnEnded)
+        #expect(event.kind == .turnEnded(awaitsReply: false))
         #expect(event.summary?.text == "Shipped: the release is tagged.")
         #expect(event.summary?.turnDuration == 42)
     }
@@ -171,8 +171,63 @@ struct ClaudeCodeAdapterTests {
         // ADR-0002: the notification must always go out; a missing transcript
         // only means no summary.
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))
-        #expect(event.kind == .turnEnded)
+        #expect(event.kind == .turnEnded(awaitsReply: false))
         #expect(event.summary == nil)
+    }
+
+    // MARK: - A turn ending on a question is "attend" (issue #39 / ADR-0006)
+
+    /// Builds a Stop payload pointing at a one-turn transcript whose last
+    /// assistant message is `lastText`, and returns the translated event.
+    private func stopEvent(lastAssistantText: String) throws -> AgentEvent {
+        let transcript = FileManager.default.temporaryDirectory
+            .appendingPathComponent("adapter-q-\(UUID().uuidString).jsonl")
+        // JSON-encode the text so quotes/newlines in the message are safe.
+        let encodedText = String(
+            data: try JSONEncoder().encode(lastAssistantText), encoding: .utf8)!
+        try Data("""
+            {"isSidechain":false,"type":"user","message":{"role":"user","content":"Go"},"uuid":"u-1","timestamp":"2026-07-19T10:00:00.000Z"}
+            {"isSidechain":false,"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":\(encodedText)}]},"uuid":"a-1","timestamp":"2026-07-19T10:00:42.000Z"}
+            """.utf8).write(to: transcript)
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let payload = Data("""
+            {
+              "session_id": "abc123",
+              "transcript_path": "\(transcript.path)",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "Stop"
+            }
+            """.utf8)
+        return try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
+    }
+
+    @Test("Stop whose last message ends on a question sets awaitsReply true")
+    func stopEndingOnQuestionAwaitsReply() throws {
+        let event = try stopEvent(
+            lastAssistantText: "I can go with Postgres or SQLite. Which do you want?")
+        #expect(event.kind == .turnEnded(awaitsReply: true))
+    }
+
+    @Test("Stop whose last message ends on a constat sets awaitsReply false")
+    func stopEndingOnConstatDoesNotAwaitReply() throws {
+        let event = try stopEvent(lastAssistantText: "Done — the parser crash is fixed.")
+        #expect(event.kind == .turnEnded(awaitsReply: false))
+    }
+
+    @Test("A rhetorical '?' mid-message that ends on a constat does not await a reply")
+    func rhetoricalQuestionMidMessageDoesNotAwaitReply() throws {
+        // Only the very end matters (ADR-0006): a '?' earlier in the message,
+        // followed by a concluding statement, is not a question to the user.
+        let event = try stopEvent(
+            lastAssistantText: "Is it done? Yes — every test passes and it is shipped.")
+        #expect(event.kind == .turnEnded(awaitsReply: false))
+    }
+
+    @Test("Trailing whitespace/newline after the '?' still counts as a question")
+    func trailingWhitespaceAfterQuestionStillAwaitsReply() throws {
+        let event = try stopEvent(lastAssistantText: "Shall I proceed?\n\n")
+        #expect(event.kind == .turnEnded(awaitsReply: true))
     }
 
     @Test("SubagentStop becomes a 'subagent stopped' event on the PARENT session")
@@ -392,7 +447,7 @@ struct ClaudeCodeAdapterTests {
     func unreadableTranscriptLeavesTitleNil() throws {
         // Fixtures.stop points at a path that does not exist here.
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))
-        #expect(event.kind == .turnEnded)
+        #expect(event.kind == .turnEnded(awaitsReply: false))
         #expect(event.title == nil)
     }
 

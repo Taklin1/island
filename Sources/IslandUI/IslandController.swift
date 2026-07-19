@@ -300,7 +300,10 @@ public final class IslandController {
     /// back to the bare "terminé" when the transcript had nothing usable).
     static func peekText(for session: Session) -> String {
         session.state == .waiting
-            ? "\(session.projectName) ? attend une réponse"
+            ? SessionCard.waitingPeekLine(
+                project: session.projectName,
+                questionText: session.lastSummary?.text
+            )
             : SessionCard.peekLine(
                 project: session.projectName,
                 summaryText: session.lastSummary?.text

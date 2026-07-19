@@ -60,7 +60,6 @@ public enum ClaudeCodeAdapter {
             guard let tool = payload.toolName else { return nil }
             kind = .toolFinished(tool: tool)
         case "Stop":
-            kind = .turnEnded
             // ADR-0002: summarize the turn by local extraction from the
             // transcript. Best-effort only — on any failure the event still
             // flows without a summary (fallback: state + project).
@@ -68,6 +67,12 @@ public enum ClaudeCodeAdapter {
                 summary = TranscriptReader.summary(
                     ofTranscriptAt: URL(fileURLWithPath: path))
             }
+            // #39 / ADR-0006: a turn whose last assistant message ends on a
+            // question ("?") is "attend", not "terminé". Detect it here on the
+            // verbatim last message (right-trimmed) and let the store resolve
+            // it after the subagent gate. No interrogative-word scan (false
+            // positives); no signal (nil/empty text) ⇒ not a question.
+            kind = .turnEnded(awaitsReply: lastMessageIsQuestion(summary?.text))
         case "Notification":
             // Only notifications that actually block on the user (permission
             // request, question) put the Session in waiting; the idle
@@ -139,6 +144,18 @@ public enum ClaudeCodeAdapter {
             case message
             case notificationType = "notification_type"
         }
+    }
+
+    /// Whether the turn's last assistant message ends on a question (#39,
+    /// ADR-0006). The rule is deliberately narrow: the verbatim text, trimmed
+    /// of surrounding whitespace/newlines, must end with `?`. No scan for
+    /// interrogative words (too many false positives), and no text at all
+    /// (extraction failed, or the turn produced no prose) means "not a
+    /// question" — the store then treats the turn as `.ended` (green), never
+    /// crying "attend" without a signal.
+    private static func lastMessageIsQuestion(_ text: String?) -> Bool {
+        guard let text else { return false }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?")
     }
 
     /// Whether a Notification actually blocks on the user — a permission

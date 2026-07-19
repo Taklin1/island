@@ -45,7 +45,7 @@ struct SessionStoreTests {
         #expect(store.sessions[0].currentTool == nil)
         #expect(store.sessions[0].state == .running)
 
-        apply(.turnEnded)
+        apply(.turnEnded(awaitsReply: false))
         #expect(store.sessions[0].state == .ended)
         #expect(store.sessions[0].currentTool == nil)
         #expect(store.sessions[0].turnStartedAt == nil)
@@ -145,7 +145,7 @@ struct SessionStoreTests {
     @Test("A finished turn awaits Acknowledgement; hovering the Island acknowledges every Session")
     func hoverAcknowledgesAllSessions() {
         let store = SessionStore()
-        store.apply(AgentEvent(sessionID: "done1", kind: .turnEnded, agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "done1", kind: .turnEnded(awaitsReply: false), agent: "claude-code"))
         store.apply(AgentEvent(sessionID: "wait1", kind: .waitingForUser(message: nil), agent: "claude-code"))
 
         let allPending = store.sessions.allSatisfy { $0.needsAcknowledgement }
@@ -163,7 +163,7 @@ struct SessionStoreTests {
     @Test("Acknowledging one Session leaves the others pending")
     func acknowledgeSingleSession() {
         let store = SessionStore()
-        store.apply(AgentEvent(sessionID: "done1", kind: .turnEnded, agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "done1", kind: .turnEnded(awaitsReply: false), agent: "claude-code"))
         store.apply(AgentEvent(sessionID: "wait1", kind: .waitingForUser(message: nil), agent: "claude-code"))
 
         store.acknowledge(sessionID: "wait1")
@@ -176,7 +176,7 @@ struct SessionStoreTests {
     func terminalFocusAcknowledgesItsSessions() {
         let store = SessionStore()
         store.apply(AgentEvent(
-            sessionID: "ghosttySession", kind: .turnEnded,
+            sessionID: "ghosttySession", kind: .turnEnded(awaitsReply: false),
             terminal: "ghostty", agent: "claude-code"
         ))
         store.apply(AgentEvent(
@@ -218,14 +218,14 @@ struct SessionStoreTests {
         )
 
         store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Fix it"), agent: "claude-code"))
-        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded, agent: "claude-code", summary: summary))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: false), agent: "claude-code", summary: summary))
         #expect(store.sessions.first?.lastSummary == summary)
 
         // A turn without a readable transcript falls back to no summary…
         store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Again"), agent: "claude-code"))
         // …and the stale summary never survives into the new turn.
         #expect(store.sessions.first?.lastSummary == nil)
-        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded, agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: false), agent: "claude-code"))
         #expect(store.sessions.first?.lastSummary == nil)
         #expect(store.sessions.first?.state == .ended)
     }
@@ -297,7 +297,7 @@ struct SessionStoreTests {
         #expect(store.sessions[0].activeSubagentCount == 1)
 
         // The main turn's Stop fires while the subagent is still working.
-        apply(.turnEnded)
+        apply(.turnEnded(awaitsReply: false))
         #expect(store.sessions[0].state == .running) // never "terminée" (#31)
         #expect(store.sessions[0].needsAcknowledgement == false)
     }
@@ -314,7 +314,7 @@ struct SessionStoreTests {
 
         apply(.promptSubmitted(prompt: "Explore"))
         apply(.subagentStarted)
-        apply(.turnEnded, summary: summary) // Stop arrives before the subagent stops
+        apply(.turnEnded(awaitsReply: false), summary: summary) // Stop arrives before the subagent stops
         #expect(store.sessions[0].state == .running)
         #expect(store.sessions[0].needsAcknowledgement == false)
 
@@ -335,7 +335,7 @@ struct SessionStoreTests {
         apply(.promptSubmitted(prompt: "Go"))
         apply(.subagentStarted)
         apply(.subagentStarted)
-        apply(.turnEnded)
+        apply(.turnEnded(awaitsReply: false))
         #expect(store.sessions[0].state == .running)
 
         apply(.subagentStopped)
@@ -355,7 +355,7 @@ struct SessionStoreTests {
         apply(.subagentStarted)
         apply(.subagentStopped) // subagent done before the main Stop
         #expect(store.sessions[0].state == .running) // main turn still going
-        apply(.turnEnded)
+        apply(.turnEnded(awaitsReply: false))
         #expect(store.sessions[0].state == .ended) // no subagent left → ended
     }
 
@@ -372,7 +372,7 @@ struct SessionStoreTests {
     @Test("A blocking notification never resurrects a turn that already ended (root cause B)")
     func waitingNeverResurrectsEndedTurn() {
         let store = SessionStore()
-        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded, agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: false), agent: "claude-code"))
         #expect(store.sessions[0].state == .ended)
 
         // A stray notification reaching the store must not turn "terminé" into "?".
@@ -408,7 +408,7 @@ struct SessionStoreTests {
         apply(.waitingForUser(message: "May I?"))
         #expect(store.sessions[0].state == .waiting)
 
-        apply(.turnEnded)
+        apply(.turnEnded(awaitsReply: false))
         #expect(store.sessions[0].state == .ended) // the turn end clears the "?"
     }
 
@@ -421,12 +421,101 @@ struct SessionStoreTests {
 
         apply(.promptSubmitted(prompt: "Go"))
         apply(.subagentStarted)
-        apply(.turnEnded) // main Stop, subagent still running → running
+        apply(.turnEnded(awaitsReply: false)) // main Stop, subagent still running → running
         apply(.waitingForUser(message: "May I?")) // a genuine block appears
         #expect(store.sessions[0].state == .waiting)
 
         // The last subagent stops: finalization must NOT wipe the "?".
         apply(.subagentStopped)
         #expect(store.sessions[0].state == .waiting)
+    }
+
+    // MARK: - A turn ending on a question is "attend", not "terminé" (issue #39)
+
+    @Test("A turn ending on a question waits (orange), not ends (green)")
+    func turnEndingOnQuestionWaits() {
+        let store = SessionStore()
+        let question = TurnSummary(text: "Which database should I target, Postgres or SQLite?")
+
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Add persistence"), agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: true), agent: "claude-code", summary: question))
+
+        #expect(store.sessions[0].state == .waiting)
+        #expect(store.sessions[0].needsAcknowledgement)
+        #expect(store.sessions[0].turnStartedAt == nil)
+        // The question is kept on the Session so the Peek can show it (#39 bonus).
+        #expect(store.sessions[0].lastSummary == question)
+    }
+
+    @Test("A turn ending on a constat still ends (green)")
+    func turnEndingOnConstatEnds() {
+        let store = SessionStore()
+
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Ship it"), agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: false), agent: "claude-code"))
+
+        #expect(store.sessions[0].state == .ended)
+        #expect(store.sessions[0].needsAcknowledgement)
+    }
+
+    @Test("A question with a subagent in flight stays running, then the last SubagentStop waits")
+    func questionWithActiveSubagentDefersToWaiting() {
+        let store = SessionStore()
+        let question = TurnSummary(text: "Ready to merge — proceed?")
+        func apply(_ kind: AgentEventKind, summary: TurnSummary? = nil) {
+            store.apply(AgentEvent(sessionID: "abc123", kind: kind, agent: "claude-code", summary: summary))
+        }
+
+        apply(.promptSubmitted(prompt: "Prepare the merge"))
+        apply(.subagentStarted)
+        // The main Stop ends on a question while the subagent is still working:
+        // the gate (#31) keeps it running, never orange mid-work.
+        apply(.turnEnded(awaitsReply: true), summary: question)
+        #expect(store.sessions[0].state == .running)
+        #expect(store.sessions[0].needsAcknowledgement == false)
+
+        // The last subagent stops: the deferred completion inherits the choice
+        // — question ⇒ waiting, not ended.
+        apply(.subagentStopped)
+        #expect(store.sessions[0].state == .waiting)
+        #expect(store.sessions[0].needsAcknowledgement)
+        #expect(store.sessions[0].lastSummary == question)
+    }
+
+    @Test("A constat with a subagent in flight defers to ended, not waiting")
+    func constatWithActiveSubagentDefersToEnded() {
+        let store = SessionStore()
+        func apply(_ kind: AgentEventKind) {
+            store.apply(AgentEvent(sessionID: "abc123", kind: kind, agent: "claude-code"))
+        }
+
+        apply(.promptSubmitted(prompt: "Explore"))
+        apply(.subagentStarted)
+        apply(.turnEnded(awaitsReply: false))
+        #expect(store.sessions[0].state == .running)
+
+        apply(.subagentStopped)
+        #expect(store.sessions[0].state == .ended)
+    }
+
+    @Test("Answering a final question starts a fresh turn that can end green (no stale orange)")
+    func answeringAQuestionResetsTheChoice() {
+        let store = SessionStore()
+        func apply(_ kind: AgentEventKind, summary: TurnSummary? = nil) {
+            store.apply(AgentEvent(sessionID: "abc123", kind: kind, agent: "claude-code", summary: summary))
+        }
+
+        apply(.promptSubmitted(prompt: "Add persistence"))
+        apply(.turnEnded(awaitsReply: true), summary: TurnSummary(text: "Postgres or SQLite?"))
+        #expect(store.sessions[0].state == .waiting)
+
+        // The user answers: a fresh turn begins and the previous question is stale.
+        apply(.promptSubmitted(prompt: "Postgres"))
+        #expect(store.sessions[0].state == .running)
+        #expect(store.sessions[0].lastSummary == nil)
+
+        // This turn ends on a constat: green, not a leftover orange.
+        apply(.turnEnded(awaitsReply: false))
+        #expect(store.sessions[0].state == .ended)
     }
 }
