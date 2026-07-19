@@ -33,6 +33,52 @@ struct SessionPresentationTests {
         #expect(card.turnStartedAt == Date(timeIntervalSince1970: 42))
     }
 
+    // MARK: - Session title header (issue #32)
+
+    @Test("The card header shows the session title when there is one")
+    func cardHeaderShowsTheSessionTitle() {
+        let session = Session(
+            id: "abc123", state: .running,
+            cwd: "/Users/loic/Documents/island", title: "Fix the parser crash",
+            agent: "claude-code")
+
+        let card = SessionCard(session: session, home: "/Users/loic")
+
+        // Title on top, project path underneath (the folder name alone was
+        // redundant with the path).
+        #expect(card.title == "Fix the parser crash")
+        #expect(card.location == "~/Documents/island")
+    }
+
+    @Test("Without a title the card header falls back to the project folder name")
+    func cardHeaderFallsBackToFolderName() {
+        let session = Session(
+            id: "abc123", state: .running,
+            cwd: "/Users/loic/Documents/island", agent: "claude-code")
+
+        let card = SessionCard(session: session, home: "/Users/loic")
+
+        #expect(card.title == "island")
+    }
+
+    @Test("Two Sessions in the same project show distinct titles")
+    func sameProjectDistinctTitles() {
+        func card(_ title: String?) -> SessionCard {
+            SessionCard(
+                session: Session(
+                    id: UUID().uuidString, state: .running,
+                    cwd: "/Users/loic/Documents/island", title: title,
+                    agent: "claude-code"),
+                home: "/Users/loic")
+        }
+
+        let a = card("Fix the parser crash")
+        let b = card("Ship the release")
+        #expect(a.title != b.title)
+        // …while the project path stays the same for both.
+        #expect(a.location == b.location)
+    }
+
     @Test("Session states map to French labels")
     func statesMapToFrenchLabels() {
         func card(_ state: SessionState) -> SessionCard {

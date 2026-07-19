@@ -31,6 +31,11 @@ public final class IslandController {
     /// Click-to-focus (issue #10): brings the Session's terminal frontmost.
     /// Injected so the UI never depends on a concrete terminal module.
     private let focusTerminal: ((String?) -> Void)?
+    /// Re-reads Session titles on Extended open (issue #32). Injected so the UI
+    /// never learns where titles come from (a `/rename` on an idle/ended Session
+    /// fires no hook; hovering must still show the new title). ADR-0004: the
+    /// transcript lives behind the adapter, the controller only triggers.
+    private let refreshTitles: (() -> Void)?
     private let viewModel = IslandViewModel()
     private var notch: DynamicNotch<ExpandedContentView, CompactLeadingView, CompactTrailingView>?
     private var cancellables: Set<AnyCancellable> = []
@@ -47,11 +52,13 @@ public final class IslandController {
     public init(
         store: SessionStore,
         quotaStore: QuotaStore = QuotaStore(),
-        focusTerminal: ((String?) -> Void)? = nil
+        focusTerminal: ((String?) -> Void)? = nil,
+        refreshTitles: (() -> Void)? = nil
     ) {
         self.store = store
         self.quotaStore = quotaStore
         self.focusTerminal = focusTerminal
+        self.refreshTitles = refreshTitles
         viewModel.activateSession = { [weak self] sessionID in
             self?.cardActivated(sessionID: sessionID)
         }
@@ -204,6 +211,9 @@ public final class IslandController {
         if hovering {
             peekTask?.cancel()
             mode = .expandedHover
+            // Extended open (issue #32): re-read titles so a /rename done while
+            // the Session was idle/ended — which fired no hook — shows up now.
+            refreshTitles?()
             viewModel.showCards = true
             // Hovering the Island is an Acknowledgement (issue #8): the user
             // has seen the pending states, the Liseré goes out.
@@ -398,9 +408,13 @@ struct SessionCardView: View {
                 // Pixel-art state glyph (issue #11): the bot screen's glyph
                 // alone, same palette and pace as the compact Sprites.
                 SpriteView(sheet: .glyphs, imageName: "glyphs", animation: card.animation)
-                Text(card.project)
+                // Session title on top (issue #32), reflecting /rename; the
+                // project path sits underneath. A long title truncates cleanly
+                // on the tail so the state label stays visible.
+                Text(card.title)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer(minLength: 8)
                 Text(card.stateLabel)
                     .font(.system(size: 11))

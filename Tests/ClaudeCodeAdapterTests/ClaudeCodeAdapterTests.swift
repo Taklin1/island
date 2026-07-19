@@ -328,6 +328,74 @@ struct ClaudeCodeAdapterTests {
         #expect(event.terminal == "ghostty")
     }
 
+    // MARK: - Session title (issue #32)
+
+    @Test("Any event reads the current title from the transcript (not just Stop), rename wins")
+    func eventsCarryTheSessionTitle() throws {
+        // /rename writes a custom-title; the auto ai-title stays frozen. The
+        // title is read on every event — here a plain PreToolUse — and the
+        // manual rename wins, so it is reflected without waiting for the turn.
+        let transcript = FileManager.default.temporaryDirectory
+            .appendingPathComponent("adapter-title-\(UUID().uuidString).jsonl")
+        try Data("""
+            {"type":"ai-title","aiTitle":"Auto generated title","sessionId":"abc123"}
+            {"isSidechain":false,"type":"user","message":{"role":"user","content":"Go"},"uuid":"u-1","timestamp":"2026-07-19T10:00:00.000Z"}
+            {"type":"custom-title","customTitle":"Renamed session","sessionId":"abc123"}
+            """.utf8).write(to: transcript)
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let payload = Data("""
+            {
+              "session_id": "abc123",
+              "transcript_path": "\(transcript.path)",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "PreToolUse",
+              "tool_name": "Bash"
+            }
+            """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
+        #expect(event.kind == .toolStarted(tool: "Bash"))
+        #expect(event.title == "Renamed session")
+    }
+
+    @Test("Hover refresh re-reads a /rename that fired no hook (#32 regression)")
+    func titleRefresherPicksUpRenameWithoutHook() throws {
+        // The real failure: rename an idle/ended Session, no further hook fires,
+        // so nothing re-reads the transcript. The refresher, triggered on hover,
+        // re-reads the remembered transcript and picks up the new custom-title.
+        let transcript = FileManager.default.temporaryDirectory
+            .appendingPathComponent("refresher-\(UUID().uuidString).jsonl")
+        let autoTitle = #"{"type":"ai-title","aiTitle":"Auto generated title","sessionId":"s1"}"#
+        try Data(autoTitle.utf8).write(to: transcript)
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let refresher = ClaudeCodeTitleRefresher()
+        let payload = Data("""
+            {"session_id": "s1", "transcript_path": "\(transcript.path)", "hook_event_name": "Stop"}
+            """.utf8)
+        refresher.observe(hookPayload: payload)
+        #expect(refresher.currentTitle(forSessionID: "s1") == "Auto generated title")
+
+        // /rename with no subsequent hook: a custom-title is appended (the auto
+        // title stays, as in real transcripts). The refresher must pick it up.
+        try Data((autoTitle + "\n"
+            + #"{"type":"custom-title","customTitle":"Renamed while idle","sessionId":"s1"}"#).utf8)
+            .write(to: transcript)
+        #expect(refresher.currentTitle(forSessionID: "s1") == "Renamed while idle")
+
+        // A Session the refresher never saw has no path to re-read.
+        #expect(refresher.currentTitle(forSessionID: "unknown") == nil)
+    }
+
+    @Test("An unreadable transcript leaves the title nil, and the event still flows")
+    func unreadableTranscriptLeavesTitleNil() throws {
+        // Fixtures.stop points at a path that does not exist here.
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))
+        #expect(event.kind == .turnEnded)
+        #expect(event.title == nil)
+    }
+
     @Test("Unreadable payload is ignored instead of crashing")
     func unreadablePayloadIsIgnored() {
         #expect(ClaudeCodeAdapter.event(fromHookPayload: Data("not json".utf8)) == nil)
