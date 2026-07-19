@@ -84,6 +84,9 @@ public final class LocalServer: @unchecked Sendable {
     }
 
     public func stop() {
+        // Break the listener → stateUpdateHandler → listener retain cycle.
+        listener?.stateUpdateHandler = nil
+        listener?.newConnectionHandler = nil
         listener?.cancel()
         listener = nil
     }

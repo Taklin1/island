@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 
 /// A Claude-agnostic view of one live agent conversation.
 public struct Session: Identifiable, Equatable, Sendable {
