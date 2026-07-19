@@ -62,6 +62,69 @@ struct LocalServerTests {
         #expect(harness.store.sessions.isEmpty)
     }
 
+    @Test("A full hook sequence drives the Session lifecycle end to end")
+    func fullHookSequenceDrivesSessionLifecycle() async throws {
+        let harness = try await ServerHarness()
+        func fixture(_ eventName: String, extra: String = "") -> String {
+            """
+            {
+              "session_id": "seq1",
+              "transcript_path": "/tmp/seq1.jsonl",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "\(eventName)"\(extra)
+            }
+            """
+        }
+
+        _ = try await harness.postHook(fixture("SessionStart", extra: #", "source": "startup""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .idle }
+
+        _ = try await harness.postHook(fixture("UserPromptSubmit", extra: #", "prompt": "Fix the login bug""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .running }
+        #expect(harness.store.sessions[0].lastPrompt == "Fix the login bug")
+
+        _ = try await harness.postHook(fixture("PreToolUse", extra: #", "tool_name": "Bash", "tool_input": {"command": "ls"}"#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.currentTool == "Bash" }
+
+        _ = try await harness.postHook(fixture("PostToolUse", extra: #", "tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_response": "done""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.currentTool == nil }
+
+        _ = try await harness.postHook(fixture("Stop", extra: #", "last_assistant_message": "Done.""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .ended }
+        #expect(harness.store.sessions.count == 1)
+
+        _ = try await harness.postHook(fixture("SessionEnd", extra: #", "reason": "prompt_input_exit""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.isEmpty }
+    }
+
+    @Test("Two simultaneous sessions stay visible and distinct")
+    func twoSimultaneousSessionsAreDistinct() async throws {
+        let harness = try await ServerHarness()
+        func fixture(_ id: String, _ eventName: String, cwd: String, extra: String = "") -> String {
+            """
+            {
+              "session_id": "\(id)",
+              "transcript_path": "/tmp/\(id).jsonl",
+              "cwd": "\(cwd)",
+              "hook_event_name": "\(eventName)"\(extra)
+            }
+            """
+        }
+
+        _ = try await harness.postHook(fixture("s1", "SessionStart", cwd: "/tmp/projet-a"), token: harness.token)
+        _ = try await harness.postHook(fixture("s2", "SessionStart", cwd: "/tmp/projet-b"), token: harness.token)
+        _ = try await harness.postHook(fixture("s2", "UserPromptSubmit", cwd: "/tmp/projet-b", extra: #", "prompt": "Go""#), token: harness.token)
+
+        try await harness.waitUntil { store in
+            store.sessions.count == 2 && store.sessions.contains { $0.state == .running }
+        }
+        let byID = Dictionary(uniqueKeysWithValues: harness.store.sessions.map { ($0.id, $0) })
+        #expect(byID["s1"]?.projectName == "projet-a")
+        #expect(byID["s1"]?.state == .idle)
+        #expect(byID["s2"]?.projectName == "projet-b")
+        #expect(byID["s2"]?.state == .running)
+    }
+
     @Test("A SubagentStop fixture is acknowledged but publishes nothing")
     func subagentStopIsIgnored() async throws {
         let harness = try await ServerHarness()
