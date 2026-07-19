@@ -1,21 +1,19 @@
 ---
 name: epic
-description: Orchestre l'implémentation complète d'une epic GitHub Akutia par des sous-agents parallèles - branche epic intermédiaire, prompts /prompt par lot, merges + bump + CHANGELOG réconciliés, gate humain unique sur la PR epic -> develop. Utiliser dès que l'utilisateur lance « /epic <N> », demande d'« implémenter l'epic », de « lancer les issues de l'epic », de « paralléliser les issues », ou nomme une epic prête à exécuter - même sans le mot « epic » (« fais toutes les issues de la #219 »). NE PAS utiliser pour préparer une epic (grilling/PRD/issues = /grill, /to-prd, /to-issues) ni pour une issue isolée (= /prompt).
+description: Orchestre l'implémentation complète d'une epic GitHub island par des sous-agents parallèles - branche epic intermédiaire, prompts /prompt par lot, merges + bump + CHANGELOG réconciliés, gate humain unique sur la PR epic -> develop. Utiliser dès que l'utilisateur lance « /epic <N> », demande d'« implémenter l'epic », de « lancer les issues de l'epic », de « paralléliser les issues », ou nomme une epic prête à exécuter - même sans le mot « epic » (« fais toutes les issues de la #12 »). NE PAS utiliser pour préparer une epic (grilling/PRD/issues = /grill, /to-prd, /to-issues) ni pour une issue isolée (= /prompt).
 ---
 
 # /epic - orchestrateur d'implémentation d'une epic
 
 Transforme une epic **déjà préparée** (issues grillées, décisions tranchées) en livraison
 complète : sous-agents parallèles en worktrees, branche epic intermédiaire, réconciliation
-version/CHANGELOG, un seul gate humain à la fin. Protocole validé par le pilote vague 1
-epic #238 (8/8 lots, v0.29.60->67, zéro agent bloqué) - détail des leçons :
-mémoire projet `multiagent-wave1-238-pilot.md` (à lire si premier usage dans la session).
+version/CHANGELOG, un seul gate humain à la fin.
 
 **Ton rôle = orchestrateur, JAMAIS implémenteur.** Tu ne touches au code que pour :
 la branche epic, les résolutions de conflit de merge, la réconciliation (bump + CHANGELOG),
-et les réparations d'hygiène attrapées en revue (ex. allowlist tsconfig oubliée).
-Tout le reste passe par un sous-agent. Une seule epic à la fois (règle 8 CLAUDE.md :
-valider avec le founder entre les phases = ici, entre les vagues et au gate final).
+et les réparations d'hygiène attrapées en revue. Tout le reste passe par un sous-agent.
+Une seule epic à la fois, et on valide avec Loic entre les phases - ici, entre les vagues
+et au gate final.
 
 **Entrées** : `/epic <N>` (numéro d'epic) ; option `--plan` = s'arrêter à l'étape 2
 (carte + prompts affichés, RIEN n'est lancé ni créé côté git/GitHub).
@@ -34,10 +32,9 @@ natives via GraphQL, fallback : checklist du body). Pour CHAQUE sous-issue ouver
    marquent les décisions founder comme FIGÉES quand elles le sont).
 
 Si UNE issue échoue : **STOPPE avant tout geste git**. Affiche la liste précise
-(issue -> ce qui manque) et renvoie vers la préparation : passe de grilling-code par agents
-read-only + décisions founder en batch + enrichissement des bodies (protocole dans la mémoire
-`multiagent-wave1-238-pilot.md` §1-3). Ne lance cette préparation QUE si le founder le
-demande explicitement - /epic n'auto-répare pas une epic mal préparée, c'est voulu :
+(issue -> ce qui manque) et renvoie vers la préparation : grilling-code par agents read-only
++ décisions founder en batch + enrichissement des bodies. Ne lance cette préparation QUE si
+Loic le demande explicitement - /epic n'auto-répare pas une epic mal préparée, c'est voulu :
 le grilling est un geste founder, pas un détail d'exécution.
 
 **Reprise (idempotence)** : relancer `/epic <N>` après une interruption reprend où on en
@@ -46,9 +43,9 @@ le grilling est un geste founder, pas un détail d'exécution.
 - **Livrée** (issue close, ou PR mergée vers la branche epic) -> exclue du plan ;
 - **En vol** (PR OUVERTE vers la branche epic, ou branche `feature/<issue>-*` avec des
   commits au-delà de la base) -> **ne JAMAIS relancer un agent dessus** (doublon garanti) :
-  reprendre la SUPERVISION là où elle en est (CI ? revue croisée ? merge ? réconciliation ?).
-  Si la branche est orpheline (aucun agent vivant), le nouvel agent REPREND la branche
-  existante au lieu d'en créer une ;
+  reprendre la SUPERVISION là où elle en est (vérif locale ? revue croisée ? merge ?
+  réconciliation ?). Si la branche est orpheline (aucun agent vivant), le nouvel agent
+  REPREND la branche existante au lieu d'en créer une ;
 - **Vierge** (rien de tout ça) -> planifiée normalement à l'étape 2.
 
 L'état se lit dans la RÉALITÉ GitHub (`gh pr list`, `git branch -a`, commits des branches),
@@ -71,12 +68,11 @@ epic. Compléter sa carte avec les règles apprises :
   ne contient QUE des issues dont tous les bloqueurs sont déjà livrés (issue close ou PR
   mergée vers la branche epic). **Deux issues liées par un bloqueur ne vont JAMAIS dans la
   même vague** - l'agent de l'aval construirait sur du code inexistant. Cycle détecté ->
-  **STOP** : c'est une erreur de découpage à remonter au founder, pas un cas à contourner.
+  **STOP** : c'est une erreur de découpage à remonter à Loic, pas un cas à contourner.
   Si le corps de l'epic porte déjà un plan de vagues, le **recalculer** et signaler tout
   écart plutôt que l'appliquer aveuglément (le plan peut avoir vieilli ; les `Blocked by`
   des sous-issues font foi).
-- **Fusionner en un seul lot** deux issues qui éditent le même fichier au même endroit
-  (ex. vague 1 : #244+#245 sur les mêmes constructeurs, #240+#250 sur le même prompt writer).
+- **Fusionner en un seul lot** deux issues qui éditent le même fichier au même endroit.
   Un lot = un agent = une branche = une PR. Une dépendance `Blocked by` entre deux issues
   qui touchent le même site d'appel est un signal fort de fusion (elles seront de toute
   façon sérialisées).
@@ -85,8 +81,7 @@ epic. Compléter sa carte avec les règles apprises :
   merges séquentiels, pas pour la parallélisation (les fichiers d'un même niveau sont
   disjoints).
 - Chaque prompt reçoit le **bloc ORCHESTRATION** (verbatim depuis
-  `references/orchestration-block.md`, en remplaçant `{PORT}` - ports DB jetable dédiés,
-  incrémentés par agent, plage 56xx) et `{base}` = branche epic partout (branche ET cible PR).
+  `references/orchestration-block.md`) et `{base}` = branche epic partout (branche ET cible PR).
 
 Si `--plan` : afficher carte + prompts et S'ARRÊTER LÀ.
 
@@ -95,69 +90,68 @@ Si `--plan` : afficher carte + prompts et S'ARRÊTER LÀ.
 - Un sous-agent par lot (Agent tool, `isolation: worktree`, nom `impl-<issue>`),
   prompt complet de l'étape 2. Lancer toute la vague en un seul tour.
 - **Relais QUESTION** : un agent qui bute termine son tour par un bloc « QUESTION: »
-  (le bloc ORCHESTRATION le lui impose). À réception : poser la question au founder
+  (le bloc ORCHESTRATION le lui impose). À réception : poser la question à Loic
   (AskUserQuestion, avec la reco de l'agent), puis renvoyer la réponse à l'agent -
   par son **agentId** (un agent au tour terminé n'est plus joignable par nom).
 - **Rapport manquant** : une notification idle peut arriver sans le rapport final ->
   renvoyer « renvoie ton rapport complet à main » au même agentId.
-- Un gotcha découvert par UN agent (CI, environnement) concerne probablement TOUTE la
-  flotte : le diffuser immédiatement aux agents encore en vol (leçon des 2 CI rouges
-  em-dash de la vague 1).
+- Un gotcha découvert par UN agent (environnement, build) concerne probablement TOUTE la
+  flotte : le diffuser immédiatement aux agents encore en vol.
 
 ## Étape 4 - Revue croisée + merges + réconciliation (par PR, séquentiel)
 
 Pour CHAQUE PR d'issue (cible = branche epic) :
 
 1. **Revue croisée du diff complet** - checklist minimale : périmètre respecté (rien
-   au-delà de l'issue), `package.json`/`CHANGELOG.md` intouchés, nouveau test enregistré
-   dans `scripts/tsconfig.json` files[] (2 oublis en vague 1, les CI vertes ne l'attrapent
-   pas), invariants de la zone `.claude/rules/*` respectés, zéro em-dash. Un doute = question
+   au-delà de l'issue), champ de version et `CHANGELOG.md` intouchés, invariants de la zone
+   respectés (règles path-scoped s'il en existe - `.claude/rules/` pas encore configuré sur
+   island), nouveaux tests présents et cohérents. Un doute = question
    à l'agent, pas un patch silencieux.
-2. **CI verte exigée**, puis merge : `gh pr merge <PR> --merge`.
+2. **Vérif locale verte exigée** : `swift build` + `swift test` (+ le parcours de feature FP
+   de l'issue). C'est la vérif de l'orchestrateur - pas de CI configurée pour l'instant,
+   ne pas en supposer une. Puis merge : `gh pr merge <PR> --merge`.
 3. **Réconciliation, STRICTEMENT gatée sur le succès du merge** (une seule chaîne `&&`,
-   jamais d'étape hors chaîne - un dérapage vague 1 a poussé une entrée CHANGELOG pour un
-   merge refusé) : `git pull --ff-only` (branche epic) `&&` bump `+0.0.1` `&&` entrée
-   CHANGELOG (style du repo : 1 ligne dense par version, reprise depuis la section
-   « Changelog proposé » du body de PR) `&&` commit `&&` push.
-4. **Conflit de merge** (typiquement `scripts/tsconfig.json` files[]) : worktree temporaire,
-   `git merge origin/<branche-epic>`, résolution par UNION des lignes, push, attendre la
-   re-CI, re-merger. Ne jamais forcer.
-5. **Clôture** : commenter l'issue (lien PR + version) et la fermer (les mots-clés `Closes`
-   ne ferment PAS une issue sur un merge hors branche par défaut - fermeture explicite
-   obligatoire). Board -> Done. L'epic s'auto-fermera via le workflow #303 quand la dernière
-   sous-issue native sera close.
+   jamais d'étape hors chaîne, pour ne pas pousser un CHANGELOG sur un merge refusé) :
+   `git pull --ff-only` (branche epic) `&&` bump `+0.0.1` (champ de version du projet)
+   `&&` entrée CHANGELOG (style du repo : 1 ligne dense par version, reprise depuis la
+   section « Changelog proposé » du body de PR) `&&` commit `&&` push.
+4. **Conflit de merge** (typiquement `CHANGELOG.md` ou le champ de version) : worktree
+   temporaire, `git merge origin/<branche-epic>`, résolution par UNION des lignes, push,
+   re-vérif locale, re-merger. Ne jamais forcer.
+5. **Clôture** : commenter l'issue (lien PR + version) et la fermer explicitement (les
+   mots-clés `Closes` ne ferment PAS une issue sur un merge hors branche par défaut).
+   Fermer l'epic manuellement une fois la dernière sous-issue close (pas de workflow
+   d'auto-fermeture configuré). Pas de board GitHub pour l'instant - rien à déplacer.
 
 ## Étape 5 - Fin de vague / fin d'epic
 
 **S'il reste des issues** : nettoyage partiel (worktrees + branches des lots livrés),
-puis **/handoff** vers une session vierge pour la vague suivante (hygiène de contexte -
-décision founder, pilote #238) : le handoff pointe la branche epic, les lots restants,
-la version courante ; fournir le prompt-à-coller.
+puis **/handoff** vers une session vierge pour la vague suivante (hygiène de contexte) :
+le handoff pointe la branche epic, les lots restants, la version courante ; fournir le
+prompt-à-coller.
 
 **Si l'epic est complète** :
 
 1. **Suite HP** : `/agentic-tests` (parcours nominaux) sur la branche epic - c'est le gate
    de composition prévu par ce skill avant une PR d'intégration.
 2. **PR `epic/<...>` -> `develop`**, body récap : issues livrées + versions, zones sensibles
-   touchées (proxy/auth, migrations, bridge - mises en évidence pour la revue humaine),
-   migrations DB à exécuter par le founder via relais VPS (jamais par un agent, jamais
-   :5434), résultats HP. Si develop a bougé pendant l'epic : merger develop dans la branche
-   epic d'abord et renuméroter versions/CHANGELOG si collision (leçon #221 : collisions de
-   version entre branches parallèles).
-3. **LE FOUNDER MERGE cette PR** - c'est le gate humain unique du flux, non négociable :
+   touchées (mises en évidence pour la revue humaine), résultats HP. Si develop a bougé
+   pendant l'epic : merger develop dans la branche epic d'abord et renuméroter
+   versions/CHANGELOG si collision (risque de collision de version entre branches parallèles).
+3. **LOIC MERGE cette PR** - c'est le gate humain unique du flux, non négociable :
    toutes les PR d'issues ont été auto-mergées par l'orchestrateur, la revue à deux parties
-   vit ICI. Ne jamais la merger toi-même, même permission en poche.
+   vit ICI. Ne jamais la merger toi-même, même permission en poche. (La PR `develop` -> `main`
+   est de même une décision humaine, hors du périmètre de /epic.)
 4. Après son merge : nettoyage complet (branches locales+remote des issues ET de l'epic,
-   worktrees, `git worktree prune`, `git remote prune origin`), vérifier l'auto-fermeture
-   de l'epic, puis **/capitalise** si la vague a appris quelque chose de nouveau
-   (mettre à jour la mémoire du protocole plutôt qu'en créer une nouvelle).
+   worktrees, `git worktree prune`, `git remote prune origin`), fermer l'epic si elle ne
+   l'est pas, puis **/capitalise** si la vague a appris quelque chose de nouveau.
 
 ---
 
 ## Ce qui casse ce flux (à surveiller activement)
 
-- **Un agent qui touche `package.json`/`CHANGELOG.md`** : conflit garanti en cascade sur
-  toutes les PR suivantes. Le bloc ORCHESTRATION l'interdit ; la revue le vérifie.
+- **Un agent qui touche le champ de version ou `CHANGELOG.md`** : conflit garanti en cascade
+  sur toutes les PR suivantes. Le bloc ORCHESTRATION l'interdit ; la revue le vérifie.
 - **Deux lots sur le même fichier dans la même vague** : la carte de l'étape 2 existe pour
   ça ; en cas de doute, fusionner les lots ou les séquencer - un conflit évité vaut mieux
   qu'un conflit résolu.
@@ -169,9 +163,9 @@ la version courante ; fournir le prompt-à-coller.
 
 ## Références
 
-- `references/orchestration-block.md` - le bloc ORCHESTRATION verbatim (leçons de flotte
-  câblées : em-dash full-content, no-build, allowlist tsconfig, ports DB, QUESTION).
-- Mémoire projet `multiagent-wave1-238-pilot.md` - le pilote complet, avec le pourquoi
-  de chaque règle.
+- `references/orchestration-block.md` - le bloc ORCHESTRATION verbatim (contraintes de
+  flotte câblées : version/CHANGELOG réservés, vérif locale swift, worktree, QUESTION).
 - Skills composés : `/prompt` (gabarit + carte), `/git-flow` (conventions de branches),
   `/agentic-tests` (FP par issue, HP avant PR d'intégration), `/handoff`, `/capitalise`.
+- Pas encore de mémoire pilote sur island : la première vague la créera via /capitalise
+  (protocole complet + pourquoi de chaque règle).
