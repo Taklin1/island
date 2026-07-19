@@ -26,26 +26,15 @@ public enum ClaudeCodeAdapter {
             return nil
         }
 
-        // SubagentStart/SubagentStop carry the PARENT session_id *and* an
-        // agent_id; they never create a Session, they bump the parent's
-        // active-subagent count (#31). Handle them before the agent_id guard
-        // below, which drops the OTHER hooks fired inside a subagent.
-        switch payload.hookEventName {
-        case "SubagentStart":
-            return event(payload, kind: .subagentStarted)
-        case "SubagentStop":
-            return event(payload, kind: .subagentStopped)
-        default:
-            break
-        }
-
-        // Any other hook fired inside a subagent (agent_id present) is ignored:
-        // only the main conversation drives a Session's lifecycle. This is what
-        // makes background subagents safe: a real turn spawning a subagent (the
-        // `Agent`/Task tool) keeps a session of its own, and all of its tool
-        // hooks carry an agent_id — they are dropped here and never touch the
-        // parent, so the parent resolves purely on its own Stop (#39, verified
-        // on a real case-4 capture: the parent's question Stop wins, orange).
+        // Any hook fired inside a subagent (agent_id present) is ignored: only
+        // the main conversation drives a Session's lifecycle. This is what makes
+        // background subagents safe — a real turn spawning a Sous-agent (the
+        // `Agent` tool) has all of the subagent's tool hooks carry an agent_id;
+        // they are dropped here and never touch the parent. The parent's live
+        // Sous-agents are instead read from the Stop's `background_tasks` list
+        // (#48, ADR-0008 amended), not from these scattered hooks. (The
+        // SubagentStart/SubagentStop hooks are never installed, so a real
+        // Sous-agent emits none — they fall through to the unhandled default.)
         guard payload.agentID == nil else { return nil }
 
         let kind: AgentEventKind
@@ -91,10 +80,14 @@ public enum ClaudeCodeAdapter {
             }
             // #39 / ADR-0006: a turn whose last assistant message ends on a
             // question ("?") is "attend", not "terminé". Detect it on that
-            // verbatim final text (right-trimmed) and let the store resolve it
-            // after the subagent gate. No interrogative-word scan (false
-            // positives); no signal (nil/empty text) ⇒ not a question.
-            kind = .turnEnded(awaitsReply: lastMessageIsQuestion(summary?.text))
+            // verbatim final text (right-trimmed). No interrogative-word scan
+            // (false positives); no signal (nil/empty text) ⇒ not a question.
+            // #48 / ADR-0008 amended: also read how many Sous-agents are still
+            // live at this Stop from `background_tasks`, so the store can gate a
+            // constat to `.running` without a race or a clock tick.
+            kind = .turnEnded(
+                awaitsReply: lastMessageIsQuestion(summary?.text),
+                liveSubagentCount: liveSubagentCount(fromHookPayload: data))
         case "Notification":
             // Only notifications that actually block on the user (permission
             // request, question) put the Session in waiting; the idle
@@ -172,6 +165,47 @@ public enum ClaudeCodeAdapter {
             case message
             case notificationType = "notification_type"
         }
+    }
+
+    /// How many **Sous-agents** are still running at this Stop, read from the
+    /// hook's `background_tasks` list (issue #48, ADR-0008 amended). Ground
+    /// truth from the targeted capture: a Stop while a background `Agent`
+    /// subagent runs carries an entry `{ id, type: "subagent", status, … }`
+    /// whose `id` is the subagent's agent_id; once it finishes, the list is
+    /// empty. Only entries that are genuinely a Sous-agent count —
+    /// `type == "subagent"` **and** a non-empty `id` — so a `session_crons`
+    /// entry or a blank id is never mistaken for one.
+    ///
+    /// `background_tasks` is a **JSON array** on the wire (Codable-decodable);
+    /// the plist-looking rendering seen while capturing was only an artifact of
+    /// logging a parsed `NSArray`. Parsing is deliberately lenient: any decode
+    /// failure or unexpected shape yields **0**, so a Stop is never dropped and
+    /// the Session simply resolves as it did before the gate — a wrong count is
+    /// caught loudly by the real-hook FP (the card would go green during a
+    /// subagent), never masked into a crash.
+    static func liveSubagentCount(fromHookPayload data: Data) -> Int {
+        guard let envelope = try? JSONDecoder().decode(BackgroundTasksEnvelope.self, from: data)
+        else { return 0 }
+        return (envelope.backgroundTasks ?? []).filter { task in
+            task.type == "subagent" && !(task.id ?? "").isEmpty
+        }.count
+    }
+
+    /// Minimal Codable view of just the `background_tasks` list, decoded
+    /// separately from ``HookPayload`` so its parsing stays lenient (a
+    /// surprising shape never fails the whole payload decode).
+    private struct BackgroundTasksEnvelope: Decodable {
+        let backgroundTasks: [BackgroundTask]?
+        enum CodingKeys: String, CodingKey {
+            case backgroundTasks = "background_tasks"
+        }
+    }
+
+    /// One entry of `background_tasks`. Only `id`/`type` matter for the gate;
+    /// every other field (`status`, `agent_type`, `description`…) is ignored.
+    private struct BackgroundTask: Decodable {
+        let id: String?
+        let type: String?
     }
 
     /// Whether the turn's last assistant message ends on a question (#39,

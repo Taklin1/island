@@ -180,12 +180,15 @@ struct LocalServerTests {
         #expect(harness.store.sessions.first { $0.id == "s2" }?.title == "Ship the release")
     }
 
-    @Test("A SubagentStop with no known parent Session creates no Session (#31)")
-    func subagentStopWithNoParentCreatesNoSession() async throws {
+    @Test("A hook fired inside a Sous-agent (agent_id present) creates no Session (#31/#48)")
+    func subagentHookWithNoParentCreatesNoSession() async throws {
         let harness = try await ServerHarness()
+        // A Sous-agent's own tool hook carries an agent_id: the adapter drops it
+        // (the parent's live Sous-agents are read from the Stop's background_tasks
+        // instead), so it never creates or touches a Session.
         let fixture = Self.stopFixture.replacingOccurrences(
             of: #""hook_event_name": "Stop""#,
-            with: #""hook_event_name": "SubagentStop", "agent_id": "sub-1""#
+            with: #""hook_event_name": "PreToolUse", "tool_name": "Bash", "agent_id": "sub-1""#
         )
 
         let (status, _) = try await harness.postHook(fixture, token: harness.token)
@@ -219,7 +222,7 @@ struct LocalServerTests {
         #expect(harness.store.sessions[0].state == .ended)
     }
 
-    @Test("A Session with a subagent in flight is never 'terminée' until the last stops (#31)")
+    @Test("A Session with a live Sous-agent (background_tasks) is never 'terminée' until zero (#48)")
     func subagentInFlightNeverShowsTerminatedEndToEnd() async throws {
         let harness = try await ServerHarness()
         func hook(_ eventName: String, extra: String = "") -> String {
@@ -232,20 +235,22 @@ struct LocalServerTests {
             }
             """
         }
+        // A Stop whose background_tasks still lists a live Sous-agent, then one
+        // where it is empty (the ground-truth JSON-array wire format, #48).
+        let liveSubagent = #", "last_assistant_message": "Working…", "background_tasks": [{"id": "sub-1", "type": "subagent", "status": "running"}]"#
+        let noSubagent = #", "last_assistant_message": "Done exploring.", "background_tasks": []"#
 
         _ = try await harness.postHook(hook("UserPromptSubmit", extra: #", "prompt": "Explore""#), token: harness.token)
         try await harness.waitUntil { $0.sessions.first?.state == .running }
 
-        _ = try await harness.postHook(hook("SubagentStart", extra: #", "agent_id": "sub-1", "agent_type": "Explore""#), token: harness.token)
+        // Main Stop fires while a Sous-agent is still running (constat): the gate
+        // keeps it running, read straight from background_tasks — race-free.
+        _ = try await harness.postHook(hook("Stop", extra: liveSubagent), token: harness.token)
         try await harness.waitUntil { $0.sessions.first?.activeSubagentCount == 1 }
-
-        // Main Stop fires while the subagent is still running: stays running.
-        _ = try await harness.postHook(hook("Stop", extra: #", "last_assistant_message": "Working…""#), token: harness.token)
-        try await Task.sleep(for: .milliseconds(100))
         #expect(harness.store.sessions[0].state == .running) // never terminée yet
 
-        // Last subagent stops → only now the turn is truly finished.
-        _ = try await harness.postHook(hook("SubagentStop", extra: #", "agent_id": "sub-1", "agent_type": "Explore""#), token: harness.token)
+        // The Sous-agent finished ⇒ a fresh Stop reports an empty list: ended.
+        _ = try await harness.postHook(hook("Stop", extra: noSubagent), token: harness.token)
         try await harness.waitUntil { $0.sessions.first?.state == .ended }
         #expect(harness.store.sessions[0].activeSubagentCount == 0)
     }
@@ -312,8 +317,8 @@ struct LocalServerTests {
         #expect(harness.store.sessions[0].state == .ended)
     }
 
-    @Test("End to end: a final question with a subagent in flight waits only after the last SubagentStop (#39)")
-    func questionWithSubagentWaitsAfterLastSubagentStopEndToEnd() async throws {
+    @Test("End to end: a final question with a live Sous-agent waits IMMEDIATELY (Q5, #48)")
+    func questionWithLiveSubagentWaitsImmediatelyEndToEnd() async throws {
         let harness = try await ServerHarness()
         let transcript = try writeTranscript(lastAssistantText: "Ready to merge — proceed?")
         defer { try? FileManager.default.removeItem(at: transcript) }
@@ -331,18 +336,11 @@ struct LocalServerTests {
         _ = try await harness.postHook(hook("UserPromptSubmit", extra: #", "prompt": "Prepare the merge""#), token: harness.token)
         try await harness.waitUntil { $0.sessions.first?.state == .running }
 
-        _ = try await harness.postHook(hook("SubagentStart", extra: #", "agent_id": "sub-1", "agent_type": "Explore""#), token: harness.token)
-        try await harness.waitUntil { $0.sessions.first?.activeSubagentCount == 1 }
-
-        // Main Stop ends on a question while the subagent is still running: the
-        // gate (#31) keeps it running — never orange mid-work.
-        _ = try await harness.postHook(hook("Stop", transcriptPath: transcript.path), token: harness.token)
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(harness.store.sessions[0].state == .running)
-
-        // Last subagent stops: the deferred completion inherits the question
-        // and waits (orange), it does not end (green).
-        _ = try await harness.postHook(hook("SubagentStop", extra: #", "agent_id": "sub-1", "agent_type": "Explore""#), token: harness.token)
+        // The main turn ends on a question WHILE a Sous-agent is still live in
+        // background_tasks: the question wins immediately (orange), the gate only
+        // ever holds back the green of a constat (Q5 corrects the old deferral).
+        let liveSubagent = #", "background_tasks": [{"id": "sub-1", "type": "subagent", "status": "running"}]"#
+        _ = try await harness.postHook(hook("Stop", transcriptPath: transcript.path, extra: liveSubagent), token: harness.token)
         try await harness.waitUntil { $0.sessions.first?.state == .waiting }
         #expect(harness.store.sessions[0].needsAcknowledgement)
     }

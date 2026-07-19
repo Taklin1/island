@@ -33,11 +33,22 @@ struct SessionCard: Identifiable, Equatable {
     /// One compact line of turn facts — "todos 1/3 · 2 fichiers · 3:20" —
     /// keeping only what the extraction actually found.
     let summaryFacts: String?
+    /// Sous-agents still running under this Session (issue #48, Q6). Drives the
+    /// discreet tally on the card; zero when none run.
+    let activeSubagentCount: Int
 
     /// French context label of the card's Quotas section, or nil when the
     /// tee never reported a context usage for this Session.
     var contextLabel: String? {
         contextUsedPercentage.map { "contexte \(Int($0.rounded())) %" }
+    }
+
+    /// Discreet French tally of live Sous-agents (issue #48, Q6), or nil when
+    /// none run — "1 sous-agent en cours" / "3 sous-agents en cours".
+    var subagentsLabel: String? {
+        guard activeSubagentCount > 0 else { return nil }
+        let noun = activeSubagentCount == 1 ? "sous-agent" : "sous-agents"
+        return "\(activeSubagentCount) \(noun) en cours"
     }
 
     init(session: Session, contextUsedPercentage: Double? = nil, home: String = NSHomeDirectory()) {
@@ -57,6 +68,7 @@ struct SessionCard: Identifiable, Equatable {
         turnStartedAt = session.turnStartedAt
         summaryText = session.lastSummary?.text
         summaryFacts = session.lastSummary.flatMap(Self.factsLine(for:))
+        activeSubagentCount = session.activeSubagentCount
     }
 
     /// Builds the facts line from a turn summary; every part is optional and

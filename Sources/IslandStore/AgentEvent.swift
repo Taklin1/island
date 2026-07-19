@@ -89,18 +89,21 @@ public enum AgentEventKind: Equatable, Sendable {
     /// The agent finished its turn (the Session stays alive, idle).
     ///
     /// `awaitsReply` is the adapter's local reading of whether the last
-    /// assistant message ended on a question (`?`, issue #39 / ADR-0006): the
-    /// store resolves it — after the subagent gate — to `.waiting` (orange)
-    /// rather than `.ended` (green). The adapter only *detects*; it never emits
-    /// `.waitingForUser` directly, which would bypass the subagent gate.
-    case turnEnded(awaitsReply: Bool)
-    /// A subagent started under this Session. Subagents never create their own
-    /// Session; they only bump the parent's active-subagent count (issue #31).
-    case subagentStarted
-    /// A subagent finished. The Session becomes ended only once the last
-    /// subagent stops *and* the main turn has ended — a SubagentStop can arrive
-    /// after the main Stop (issue #31).
-    case subagentStopped
+    /// assistant message ended on a question (`?`, issue #39 / ADR-0006):
+    /// a question resolves to `.waiting` (orange) **immediately**, even with a
+    /// subagent still live (Q5, question wins). The adapter only *detects*; it
+    /// never emits `.waitingForUser` directly, which would bypass the gate.
+    ///
+    /// `liveSubagentCount` is the number of **Sous-agents still running at this
+    /// Stop**, read from the hook's `background_tasks` list (issue #48,
+    /// ADR-0008 amended): entries with `type == "subagent"` and a non-empty
+    /// `id`. On a constat (`awaitsReply == false`), a non-zero count keeps the
+    /// Session `.running` (the gate) — it becomes `.ended` only once a later
+    /// Stop reports zero. This is race-free: the count comes from the Stop
+    /// payload itself, so it never depends on a subagent's own hooks landing
+    /// first, and no clock tick is needed (every subagent completion triggers a
+    /// fresh main turn ⇒ a fresh Stop that re-evaluates the list).
+    case turnEnded(awaitsReply: Bool, liveSubagentCount: Int)
     /// The agent is blocked on the user (permission request or question).
     case waitingForUser(message: String?)
     /// The Session closed for good: it disappears from the Island.

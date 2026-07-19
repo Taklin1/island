@@ -33,6 +33,24 @@ struct SessionPresentationTests {
         #expect(card.turnStartedAt == Date(timeIntervalSince1970: 42))
     }
 
+    // MARK: - Discreet Sous-agent tally (issue #48, Q6)
+
+    @Test("The card shows a discreet count of live Sous-agents, singular/plural")
+    func cardShowsLiveSubagentTally() {
+        func label(_ count: Int) -> String? {
+            SessionCard(
+                session: Session(
+                    id: "x", state: .running, agent: "claude-code",
+                    activeSubagentCount: count),
+                home: "/Users/loic"
+            ).subagentsLabel
+        }
+
+        #expect(label(0) == nil) // nothing to show
+        #expect(label(1) == "1 sous-agent en cours")
+        #expect(label(3) == "3 sous-agents en cours")
+    }
+
     // MARK: - Session title header (issue #32)
 
     @Test("The card header shows the session title when there is one")

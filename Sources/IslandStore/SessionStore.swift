@@ -31,18 +31,12 @@ public struct Session: Identifiable, Equatable, Sendable {
     /// True while a marking event (waiting / turn ended) has not been
     /// Acknowledged by the user. Drives the Liseré.
     public var needsAcknowledgement: Bool
-    /// Subagents currently running under this Session (issue #31). A Session
-    /// with a live subagent is never shown "terminée": its turn is not done.
+    /// Sous-agents still running under this Session at its last Stop (issues
+    /// #31/#48). Read from the Stop's `background_tasks` list (ADR-0008
+    /// amended): a Session with a live Sous-agent is never shown "terminée" —
+    /// its turn is not done — and the count feeds the discreet tally on the
+    /// Extended card (Q6). Reset to zero when a new turn starts.
     public var activeSubagentCount: Int
-    /// Whether the main turn's Stop hook has fired for the current turn. The
-    /// Session only becomes `.ended` once this is true *and* no subagent is
-    /// still running — a SubagentStop can arrive after the main Stop (#31).
-    public var mainTurnFinished: Bool
-    /// Whether the main turn ended on a question (`?`, issue #39 / ADR-0006).
-    /// Transient, like ``mainTurnFinished``: recorded at the main Stop so the
-    /// deferred completion (last SubagentStop) inherits the same choice —
-    /// question ⇒ `.waiting` (orange), constat ⇒ `.ended` (green).
-    public var mainTurnAwaitsReply: Bool
 
     /// Human-readable project name: last path component of the cwd.
     public var projectName: String {
@@ -63,9 +57,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         lastSummary: TurnSummary? = nil,
         lastActivityAt: Date = Date(),
         needsAcknowledgement: Bool = false,
-        activeSubagentCount: Int = 0,
-        mainTurnFinished: Bool = false,
-        mainTurnAwaitsReply: Bool = false
+        activeSubagentCount: Int = 0
     ) {
         self.id = id
         self.state = state
@@ -80,8 +72,6 @@ public struct Session: Identifiable, Equatable, Sendable {
         self.lastActivityAt = lastActivityAt
         self.needsAcknowledgement = needsAcknowledgement
         self.activeSubagentCount = activeSubagentCount
-        self.mainTurnFinished = mainTurnFinished
-        self.mainTurnAwaitsReply = mainTurnAwaitsReply
     }
 }
 
@@ -144,13 +134,6 @@ public final class SessionStore: ObservableObject {
         }
 
         let existing = sessions.first(where: { $0.id == event.sessionID })
-        // Subagent bookkeeping targets the PARENT Session and never creates one
-        // (#31): a subagent event for a Session we don't track is dropped.
-        if existing == nil,
-            event.kind == .subagentStarted || event.kind == .subagentStopped {
-            return
-        }
-
         var session = existing
             ?? Session(
                 id: event.sessionID,
@@ -186,11 +169,10 @@ public final class SessionStore: ObservableObject {
             session.turnStartedAt = timestamp
             session.needsAcknowledgement = false
             session.lastSummary = nil
-            // A new prompt is a fresh turn: the previous main Stop no longer
-            // counts against the subagents still being tracked (#31), and the
-            // previous turn's question is stale (#39).
-            session.mainTurnFinished = false
-            session.mainTurnAwaitsReply = false
+            // A new prompt is a fresh turn: any Sous-agent tally from the
+            // previous turn's Stop is stale (#48). The next Stop re-reads the
+            // live list from `background_tasks`.
+            session.activeSubagentCount = 0
         case let .toolStarted(tool):
             session.state = .running
             session.currentTool = tool
@@ -200,46 +182,27 @@ public final class SessionStore: ObservableObject {
             }
         case .toolFinished:
             session.currentTool = nil
-        case let .turnEnded(awaitsReply):
-            // The main turn's Stop fired. But it is only "terminée" once every
-            // subagent has stopped too — a Stop with subagents in flight keeps
-            // the Session "en cours" (root cause C, #31). Once resolvable, a
-            // turn that ended on a question waits (orange) instead of ending
-            // (green) — "détecter puis résoudre" (#39, ADR-0006).
+        case let .turnEnded(awaitsReply, liveSubagentCount):
+            // The main turn's Stop fired, carrying the live Sous-agent tally
+            // read from `background_tasks` at this exact Stop (#48, ADR-0008
+            // amended). Resolution, race-free (the count is in the payload):
+            //   • a question wins immediately — orange, even with a Sous-agent
+            //     still live (Q5, #39 non-regression);
+            //   • otherwise a constat stays "en cours" while a Sous-agent runs
+            //     (the gate) and only ends once a later Stop reports zero.
+            // Every Sous-agent completion injects a fresh main turn ⇒ a fresh
+            // Stop, so the gate always re-resolves on an event — no clock tick.
             session.currentTool = nil
             session.lastSummary = event.summary
-            session.mainTurnFinished = true
-            session.mainTurnAwaitsReply = awaitsReply
-            if session.activeSubagentCount > 0 {
-                session.state = .running
-            } else {
-                session.state = awaitsReply ? .waiting : .ended
+            session.activeSubagentCount = liveSubagentCount
+            if awaitsReply {
+                session.state = .waiting
                 session.turnStartedAt = nil
                 session.needsAcknowledgement = true
-            }
-        case .subagentStarted:
-            // Subagents never create a Session (guarded above); they bump the
-            // parent's count and keep it working, never "terminée" (#31).
-            session.activeSubagentCount += 1
-            if session.state == .idle || session.state == .ended {
+            } else if liveSubagentCount > 0 {
                 session.state = .running
-                session.needsAcknowledgement = false
-                session.mainTurnFinished = false
-                session.mainTurnAwaitsReply = false
-            }
-        case .subagentStopped:
-            session.activeSubagentCount = max(0, session.activeSubagentCount - 1)
-            if session.activeSubagentCount == 0,
-                session.mainTurnFinished,
-                session.state == .running {
-                // Last subagent gone and the main turn already ended: only now
-                // is the turn truly finished — this Stop may arrive after the
-                // main one (#31). Guarded to `.running` so it never clobbers a
-                // genuine block ("?") that appeared during the wrap-up. The
-                // deferred completion inherits the main turn's choice: a turn
-                // that ended on a question waits, it does not end (#39).
-                session.state = session.mainTurnAwaitsReply ? .waiting : .ended
-                session.currentTool = nil
+            } else {
+                session.state = .ended
                 session.turnStartedAt = nil
                 session.needsAcknowledgement = true
             }
