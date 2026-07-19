@@ -47,9 +47,8 @@ A list of implementation decisions that were made. This can include:
 - The interfaces of those modules that will be modified
 - Technical clarifications from the developer
 - Architectural decisions
-- Schema changes
-- API contracts
-- Specific interactions
+- Hook event shapes the app consumes, and any change to the published Session state
+- Specific interactions (pill states, notifications, transitions)
 
 Do NOT include specific file paths or code snippets. They may end up being outdated very quickly.
 

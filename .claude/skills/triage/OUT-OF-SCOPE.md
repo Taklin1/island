@@ -21,28 +21,29 @@ One file per **concept**, not per issue. Multiple issues requesting the same thi
 The file should be written in a relaxed, readable style — more like a short design document than a database entry. Use paragraphs, code samples, and examples to make the reasoning clear and useful to someone encountering it for the first time.
 
 ```markdown
-# Dark Mode
+# Custom Theming
 
-This project does not support dark mode or user-facing theming.
+The pill follows the system appearance. It does not support user-configurable
+custom color themes or skins.
 
 ## Why this is out of scope
 
-The rendering pipeline assumes a single color palette defined in
-`ThemeConfig`. Supporting multiple themes would require:
+The rendering assumes the single palette resolved from the system appearance,
+held in `PillTheme`. Supporting user-defined themes would require:
 
-- A theme context provider wrapping the entire component tree
-- Per-component theme-aware style resolution
-- A persistence layer for user theme preferences
+- Threading a theme through every SwiftUI view
+- Per-view theme-aware style resolution
+- A persistence layer for the user's theme choices
 
-This is a significant architectural change that doesn't align with the
-project's focus on content authoring. Theming is a concern for downstream
-consumers who embed or redistribute the output.
+This is a significant change that doesn't align with the app's focus on
+staying an unobtrusive, system-native indicator. Following light/dark from the
+OS covers the real need.
 
-```ts
-// The current ThemeConfig interface is not designed for runtime switching:
-interface ThemeConfig {
-  colors: ColorPalette; // single palette, resolved at build time
-  fonts: FontStack;
+```swift
+// The current PillTheme is resolved from the system appearance, not switchable at runtime:
+struct PillTheme {
+    let colors: ColorPalette  // single palette, from the system appearance
+    let fonts: FontStack
 }
 ```
 

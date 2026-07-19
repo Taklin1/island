@@ -4,25 +4,25 @@ Good interfaces make testing natural:
 
 1. **Accept dependencies, don't create them**
 
-   ```typescript
+   ```swift
    // Testable
-   function processOrder(order, paymentGateway) {}
+   func handle(_ event: HookEvent, clock: Clock) { }
 
    // Hard to test
-   function processOrder(order) {
-     const gateway = new StripeGateway();
+   func handle(_ event: HookEvent) {
+       let now = Date()  // wall clock baked in
    }
    ```
 
 2. **Return results, don't produce side effects**
 
-   ```typescript
+   ```swift
    // Testable
-   function calculateDiscount(cart): Discount {}
+   func reduce(_ state: SessionState, _ event: HookEvent) -> SessionState { }
 
    // Hard to test
-   function applyDiscount(cart): void {
-     cart.total -= discount;
+   func apply(_ event: HookEvent) {
+       self.sessionState.mutateInPlace(event)
    }
    ```
 
