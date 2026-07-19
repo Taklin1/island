@@ -61,16 +61,33 @@ public enum ClaudeCodeAdapter {
             kind = .toolFinished(tool: tool)
         case "Stop":
             // ADR-0002: summarize the turn by local extraction from the
-            // transcript. Best-effort only — on any failure the event still
-            // flows without a summary (fallback: state + project).
+            // transcript (todos, files, duration, and the last message text).
+            // Best-effort only — on any failure the event still flows without a
+            // summary (fallback: state + project).
             if let path = payload.transcriptPath {
                 summary = TranscriptReader.summary(
                     ofTranscriptAt: URL(fileURLWithPath: path))
             }
+            // The transcript file LAGS at Stop time: Claude Code's hooks docs
+            // warn it "might not yet include the current turn's most recent
+            // messages", and recommend using `last_assistant_message` from the
+            // payload for the final assistant text. That field is authoritative
+            // and race-free, so it wins over the (possibly stale) transcript
+            // text; the transcript still provides the structured facts. Older
+            // builds omit it → we keep the transcript text (#39, real repro).
+            if let message = payload.lastAssistantMessage, !message.isEmpty {
+                summary = TurnSummary(
+                    text: message,
+                    todosDone: summary?.todosDone,
+                    todosTotal: summary?.todosTotal,
+                    filesModified: summary?.filesModified ?? [],
+                    turnDuration: summary?.turnDuration
+                )
+            }
             // #39 / ADR-0006: a turn whose last assistant message ends on a
-            // question ("?") is "attend", not "terminé". Detect it here on the
-            // verbatim last message (right-trimmed) and let the store resolve
-            // it after the subagent gate. No interrogative-word scan (false
+            // question ("?") is "attend", not "terminé". Detect it on that
+            // verbatim final text (right-trimmed) and let the store resolve it
+            // after the subagent gate. No interrogative-word scan (false
             // positives); no signal (nil/empty text) ⇒ not a question.
             kind = .turnEnded(awaitsReply: lastMessageIsQuestion(summary?.text))
         case "Notification":
@@ -124,6 +141,11 @@ public enum ClaudeCodeAdapter {
         let toolName: String?
         /// Present only when the hook fires inside a subagent call.
         let agentID: String?
+        /// Stop hook only: the verbatim final assistant message of the turn.
+        /// Claude Code hands it in the payload precisely because the transcript
+        /// file may lag at Stop time — it is the authoritative, race-free source
+        /// for the final text (#39). Absent on older builds.
+        let lastAssistantMessage: String?
         /// Notification hook only: human-readable notification text.
         let message: String?
         /// Notification hook only. Claude Code's Notification types include
@@ -141,6 +163,7 @@ public enum ClaudeCodeAdapter {
             case prompt
             case toolName = "tool_name"
             case agentID = "agent_id"
+            case lastAssistantMessage = "last_assistant_message"
             case message
             case notificationType = "notification_type"
         }

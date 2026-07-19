@@ -166,13 +166,15 @@ struct ClaudeCodeAdapterTests {
         #expect(event.summary?.turnDuration == 42)
     }
 
-    @Test("Stop with an unreadable transcript still emits the event (fallback)")
+    @Test("Stop with an unreadable transcript still emits the event, with the payload's final text")
     func stopWithUnreadableTranscriptStillNotifies() throws {
-        // ADR-0002: the notification must always go out; a missing transcript
-        // only means no summary.
+        // ADR-0002: the notification must always go out. The transcript here is
+        // unreadable, but the payload's last_assistant_message ("Done
+        // refactoring.") still provides the final text — the race-free source
+        // Claude Code recommends over the lagging transcript (#39).
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))
         #expect(event.kind == .turnEnded(awaitsReply: false))
-        #expect(event.summary == nil)
+        #expect(event.summary?.text == "Done refactoring.")
     }
 
     // MARK: - A turn ending on a question is "attend" (issue #39 / ADR-0006)
@@ -228,6 +230,72 @@ struct ClaudeCodeAdapterTests {
     func trailingWhitespaceAfterQuestionStillAwaitsReply() throws {
         let event = try stopEvent(lastAssistantText: "Shall I proceed?\n\n")
         #expect(event.kind == .turnEnded(awaitsReply: true))
+    }
+
+    @Test("REAL REPRO: the transcript lags at Stop; the question is detected from last_assistant_message (#39)")
+    func questionDetectedFromPayloadWhenTranscriptLags() throws {
+        // Root cause of the real FP failure: Claude Code's hooks docs warn the
+        // transcript file "may lag behind the in-memory conversation" at Stop —
+        // the just-produced final message may not be flushed yet. Here the
+        // transcript's last assistant text is still an OLD constat (the message
+        // BEFORE the question), while the payload's last_assistant_message is
+        // the fresh question. The old code (transcript-only) read the stale
+        // constat → awaitsReply false → green. The fix reads the authoritative
+        // payload field → true → orange.
+        let transcript = FileManager.default.temporaryDirectory
+            .appendingPathComponent("adapter-lag-\(UUID().uuidString).jsonl")
+        try Data("""
+            {"isSidechain":false,"type":"user","message":{"role":"user","content":"Add persistence"},"uuid":"u-1","timestamp":"2026-07-19T10:00:00.000Z"}
+            {"isSidechain":false,"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Working on it."}]},"uuid":"a-1","timestamp":"2026-07-19T10:00:10.000Z"}
+            """.utf8).write(to: transcript)
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let payload = Data("""
+            {
+              "session_id": "abc123",
+              "transcript_path": "\(transcript.path)",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "Stop",
+              "last_assistant_message": "I can target Postgres or SQLite. Which do you want?"
+            }
+            """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
+        #expect(event.kind == .turnEnded(awaitsReply: true))
+        // And the authoritative final text wins over the stale transcript, so
+        // the Peek shows the real question (« projet · attend : "…?" »).
+        #expect(event.summary?.text == "I can target Postgres or SQLite. Which do you want?")
+    }
+
+    @Test("last_assistant_message wins over the transcript text (authoritative final text, #39)")
+    func lastAssistantMessagePreferredOverTranscriptText() throws {
+        // Even when the transcript IS readable, the payload's last_assistant_message
+        // is the authoritative final text (Claude Code docs). A stale transcript
+        // constat must not override a fresh payload question, nor vice-versa.
+        let transcript = FileManager.default.temporaryDirectory
+            .appendingPathComponent("adapter-pref-\(UUID().uuidString).jsonl")
+        try Data("""
+            {"isSidechain":false,"type":"user","message":{"role":"user","content":"Go"},"uuid":"u-1","timestamp":"2026-07-19T10:00:00.000Z"}
+            {"isSidechain":false,"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","name":"TodoWrite","input":{"todos":[{"content":"x","status":"completed"}]}},{"type":"text","text":"An earlier line, not the end."}]},"uuid":"a-1","timestamp":"2026-07-19T10:00:20.000Z"}
+            """.utf8).write(to: transcript)
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let payload = Data("""
+            {
+              "session_id": "abc123",
+              "transcript_path": "\(transcript.path)",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "Stop",
+              "last_assistant_message": "Everything is wired. Ship it?"
+            }
+            """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
+        #expect(event.kind == .turnEnded(awaitsReply: true))
+        #expect(event.summary?.text == "Everything is wired. Ship it?")
+        // Structured facts still come from the transcript.
+        #expect(event.summary?.todosDone == 1)
+        #expect(event.summary?.todosTotal == 1)
     }
 
     @Test("SubagentStop becomes a 'subagent stopped' event on the PARENT session")

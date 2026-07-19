@@ -346,6 +346,34 @@ struct LocalServerTests {
         try await harness.waitUntil { $0.sessions.first?.state == .waiting }
         #expect(harness.store.sessions[0].needsAcknowledgement)
     }
+
+    @Test("End to end REAL REPRO: a lagging transcript still publishes waiting via last_assistant_message (#39)")
+    func laggingTranscriptStillPublishesWaitingViaPayload() async throws {
+        let harness = try await ServerHarness()
+        // The transcript LAGS at Stop (Claude Code docs): its last assistant
+        // text is still the OLD constat, while the payload's authoritative
+        // last_assistant_message is the fresh question. The Session must still
+        // land orange "attend" — the real FP that failed before the fix.
+        let stale = try writeTranscript(lastAssistantText: "Working on it.")
+        defer { try? FileManager.default.removeItem(at: stale) }
+
+        let fixture = """
+        {
+          "session_id": "lag1",
+          "transcript_path": "\(stale.path)",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Stop",
+          "last_assistant_message": "Postgres or SQLite — which do you want?"
+        }
+        """
+
+        _ = try await harness.postHook(fixture, token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .waiting }
+        let session = try #require(harness.store.sessions.first)
+        #expect(session.state == .waiting)
+        #expect(session.needsAcknowledgement)
+        #expect(session.lastSummary?.text == "Postgres or SQLite — which do you want?")
+    }
 }
 
 /// Boots a LocalServer on an ephemeral port, wired exactly like the app:
