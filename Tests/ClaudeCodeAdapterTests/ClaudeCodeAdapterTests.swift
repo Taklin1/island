@@ -328,6 +328,45 @@ struct ClaudeCodeAdapterTests {
         #expect(event.terminal == "ghostty")
     }
 
+    // MARK: - Session title (issue #32)
+
+    @Test("Any event reads the current title from the transcript (not just Stop)")
+    func eventsCarryTheSessionTitle() throws {
+        // A rename lands as a fresh ai-title at the end; the last one wins, and
+        // the title is read on every event — here a plain PreToolUse — so a
+        // rename is reflected without waiting for the turn to end.
+        let transcript = FileManager.default.temporaryDirectory
+            .appendingPathComponent("adapter-title-\(UUID().uuidString).jsonl")
+        try Data("""
+            {"type":"ai-title","aiTitle":"First title","sessionId":"abc123"}
+            {"isSidechain":false,"type":"user","message":{"role":"user","content":"Go"},"uuid":"u-1","timestamp":"2026-07-19T10:00:00.000Z"}
+            {"type":"ai-title","aiTitle":"Renamed session","sessionId":"abc123"}
+            """.utf8).write(to: transcript)
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let payload = Data("""
+            {
+              "session_id": "abc123",
+              "transcript_path": "\(transcript.path)",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "PreToolUse",
+              "tool_name": "Bash"
+            }
+            """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
+        #expect(event.kind == .toolStarted(tool: "Bash"))
+        #expect(event.title == "Renamed session")
+    }
+
+    @Test("An unreadable transcript leaves the title nil, and the event still flows")
+    func unreadableTranscriptLeavesTitleNil() throws {
+        // Fixtures.stop points at a path that does not exist here.
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))
+        #expect(event.kind == .turnEnded)
+        #expect(event.title == nil)
+    }
+
     @Test("Unreadable payload is ignored instead of crashing")
     func unreadablePayloadIsIgnored() {
         #expect(ClaudeCodeAdapter.event(fromHookPayload: Data("not json".utf8)) == nil)

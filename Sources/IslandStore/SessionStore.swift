@@ -8,6 +8,11 @@ public struct Session: Identifiable, Equatable, Sendable {
     public var state: SessionState
     /// Working directory of the session, when known.
     public var cwd: String?
+    /// Session title, when the adapter could extract one (issue #32, e.g. the
+    /// Claude Code `ai-title`). `nil` until a title is known; the UI then falls
+    /// back to ``projectName``. Reflects `/rename`: the store keeps the latest
+    /// title an event carried.
+    public var title: String?
     /// Which agent tool drives this session (e.g. "claude-code").
     public let agent: String
     /// Terminal hosting the session (e.g. "ghostty"), when known.
@@ -44,6 +49,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         id: String,
         state: SessionState,
         cwd: String? = nil,
+        title: String? = nil,
         agent: String,
         terminal: String? = nil,
         lastPrompt: String? = nil,
@@ -58,6 +64,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         self.id = id
         self.state = state
         self.cwd = cwd
+        self.title = title
         self.agent = agent
         self.terminal = terminal
         self.lastPrompt = lastPrompt
@@ -151,6 +158,12 @@ public final class SessionStore: ObservableObject {
         }
         if let terminal = event.terminal {
             session.terminal = terminal
+        }
+        // Title (issue #32): keep the latest one an event carried, and never
+        // clear a known title when a later event could not read one — so a
+        // /rename is reflected while a titleless event leaves it untouched.
+        if let title = event.title {
+            session.title = title
         }
         session.lastActivityAt = timestamp
 

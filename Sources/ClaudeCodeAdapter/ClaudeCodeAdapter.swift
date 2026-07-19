@@ -80,13 +80,22 @@ public enum ClaudeCodeAdapter {
             return nil
         }
 
-        return event(payload, kind: kind, summary: summary)
+        // Session title (issue #32): re-read on every main event, not just Stop
+        // — a /rename does not always fire a hook, so the current title is
+        // picked up from the transcript at the next event of any kind. Cheap
+        // bounded tail read; nil on any failure (fallback: project folder name).
+        let title = payload.transcriptPath.flatMap {
+            TranscriptReader.title(ofTranscriptAt: URL(fileURLWithPath: $0))
+        }
+
+        return event(payload, kind: kind, summary: summary, title: title)
     }
 
     /// Builds a generic event from a decoded payload, filling in the v1
     /// terminal/agent defaults (ADR-0004).
     private static func event(
-        _ payload: HookPayload, kind: AgentEventKind, summary: TurnSummary? = nil
+        _ payload: HookPayload, kind: AgentEventKind,
+        summary: TurnSummary? = nil, title: String? = nil
     ) -> AgentEvent {
         AgentEvent(
             sessionID: payload.sessionID,
@@ -94,7 +103,8 @@ public enum ClaudeCodeAdapter {
             cwd: payload.cwd,
             terminal: defaultTerminal,
             agent: agentName,
-            summary: summary
+            summary: summary,
+            title: title
         )
     }
 

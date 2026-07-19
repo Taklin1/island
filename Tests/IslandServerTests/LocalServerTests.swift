@@ -125,6 +125,59 @@ struct LocalServerTests {
         #expect(byID["s2"]?.state == .running)
     }
 
+    @Test("End to end: same-project Sessions carry distinct titles, and a /rename updates one (#32)")
+    func sessionTitlesAreDistinctAndReflectRename() async throws {
+        let harness = try await ServerHarness()
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("island-titles-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // One transcript file per Session (the file name is the session id).
+        func writeTranscript(_ id: String, titles: [String]) throws -> URL {
+            let url = dir.appendingPathComponent("\(id).jsonl")
+            let lines = titles.map {
+                #"{"type":"ai-title","aiTitle":"\#($0)","sessionId":"\#(id)"}"#
+            }
+            try Data(lines.joined(separator: "\n").utf8).write(to: url)
+            return url
+        }
+        func hook(_ id: String, _ eventName: String, transcript: URL, extra: String = "") -> String {
+            """
+            {
+              "session_id": "\(id)",
+              "transcript_path": "\(transcript.path)",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "\(eventName)"\(extra)
+            }
+            """
+        }
+
+        // Two Sessions in the SAME project (same cwd) but distinct titles.
+        let t1 = try writeTranscript("s1", titles: ["Fix the parser crash"])
+        let t2 = try writeTranscript("s2", titles: ["Ship the release"])
+        _ = try await harness.postHook(hook("s1", "UserPromptSubmit", transcript: t1, extra: #", "prompt": "Go""#), token: harness.token)
+        _ = try await harness.postHook(hook("s2", "UserPromptSubmit", transcript: t2, extra: #", "prompt": "Go""#), token: harness.token)
+
+        try await harness.waitUntil { $0.sessions.count == 2 && $0.sessions.allSatisfy { $0.title != nil } }
+        let byID = Dictionary(uniqueKeysWithValues: harness.store.sessions.map { ($0.id, $0) })
+        #expect(byID["s1"]?.projectName == "island")
+        #expect(byID["s2"]?.projectName == "island")
+        // Same project, yet the titles distinguish the two Sessions.
+        #expect(byID["s1"]?.title == "Fix the parser crash")
+        #expect(byID["s2"]?.title == "Ship the release")
+
+        // A /rename appends a fresh ai-title; the next event of any kind picks
+        // it up (no rename-specific hook needed).
+        _ = try writeTranscript("s1", titles: ["Fix the parser crash", "Renamed after /rename"])
+        _ = try await harness.postHook(hook("s1", "PreToolUse", transcript: t1, extra: #", "tool_name": "Bash""#), token: harness.token)
+
+        try await harness.waitUntil { $0.sessions.first { $0.id == "s1" }?.title == "Renamed after /rename" }
+        // The other Session's title is untouched.
+        #expect(harness.store.sessions.first { $0.id == "s2" }?.title == "Ship the release")
+    }
+
     @Test("A SubagentStop with no known parent Session creates no Session (#31)")
     func subagentStopWithNoParentCreatesNoSession() async throws {
         let harness = try await ServerHarness()

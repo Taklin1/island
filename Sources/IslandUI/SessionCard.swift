@@ -5,6 +5,10 @@ import IslandStore
 /// Pure data + formatting: the SwiftUI layer only lays it out.
 struct SessionCard: Identifiable, Equatable {
     let id: String
+    /// Header line of the card (issue #32): the session title (Claude Code's
+    /// `ai-title`, reflecting `/rename`), falling back to the project folder
+    /// name when no title is known yet. Shown on top; the path goes underneath.
+    let title: String
     /// Project name (last component of the cwd).
     let project: String
     /// Abbreviated cwd ("~/Documents/island"), or nil when unknown.
@@ -39,6 +43,7 @@ struct SessionCard: Identifiable, Equatable {
     init(session: Session, contextUsedPercentage: Double? = nil, home: String = NSHomeDirectory()) {
         id = session.id
         project = session.projectName
+        title = session.title ?? session.projectName
         if let cwd = session.cwd, !cwd.isEmpty {
             location = cwd.hasPrefix(home) ? "~" + cwd.dropFirst(home.count) : cwd
         } else {

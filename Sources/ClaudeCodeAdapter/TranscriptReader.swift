@@ -15,6 +15,14 @@ public enum TranscriptReader {
     /// How much of the end of the transcript is read at most.
     public static let defaultMaxTailBytes = 4 * 1024 * 1024
 
+    /// How much of the end is read when only the session title is wanted
+    /// (issue #32). Much smaller than the summary cap: the `ai-title` record is
+    /// re-emitted throughout the transcript (roughly every few dozen KB) and a
+    /// `/rename` appends a fresh one at the very end, so a modest tail always
+    /// holds the current title — and this read runs on *every* event, so it
+    /// must stay cheap.
+    public static let defaultTitleTailBytes = 256 * 1024
+
     /// Reads the transcript tail and summarizes the last main turn.
     ///
     /// - Returns: the summary, or `nil` when the file is missing, unreadable,
@@ -92,6 +100,33 @@ public enum TranscriptReader {
         return summary
     }
 
+    /// Extracts the current session title (issue #32) from the transcript.
+    ///
+    /// Claude Code writes the title on its own JSONL line
+    /// (`{"type":"ai-title","aiTitle":"…"}`) and re-emits it as the conversation
+    /// grows; `/rename` appends a new one. Walking the bounded tail backwards
+    /// and returning the first `ai-title` found therefore yields the *current*
+    /// title, reflecting a rename. Defensive like ``summary(ofTranscriptAt:)``:
+    /// a missing/unreadable/titleless transcript returns `nil` and the caller
+    /// falls back to the project folder name.
+    ///
+    /// - Returns: the current title, or `nil` when none is present in the tail.
+    public static func title(
+        ofTranscriptAt url: URL,
+        maxTailBytes: Int = defaultTitleTailBytes
+    ) -> String? {
+        guard let lines = tailLines(of: url, maxBytes: maxTailBytes) else { return nil }
+
+        for raw in lines.reversed() {
+            guard let line = TranscriptLine(jsonLine: raw), line.type == "ai-title" else {
+                continue
+            }
+            let title = line.aiTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let title, !title.isEmpty { return title }
+        }
+        return nil
+    }
+
     /// Tool names whose `file_path`-shaped input means "this file changed".
     private static let fileModifyingTools: Set<String> = [
         "Edit", "Write", "MultiEdit", "NotebookEdit",
@@ -162,6 +197,8 @@ struct TranscriptLine: Decodable {
     let isSidechain: Bool?
     let isMeta: Bool?
     let timestamp: String?
+    /// Session title carried by `type: "ai-title"` lines (issue #32).
+    let aiTitle: String?
     let message: Message?
 
     init?(jsonLine: Substring) {

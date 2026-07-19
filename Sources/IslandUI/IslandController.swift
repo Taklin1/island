@@ -398,9 +398,13 @@ struct SessionCardView: View {
                 // Pixel-art state glyph (issue #11): the bot screen's glyph
                 // alone, same palette and pace as the compact Sprites.
                 SpriteView(sheet: .glyphs, imageName: "glyphs", animation: card.animation)
-                Text(card.project)
+                // Session title on top (issue #32), reflecting /rename; the
+                // project path sits underneath. A long title truncates cleanly
+                // on the tail so the state label stays visible.
+                Text(card.title)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer(minLength: 8)
                 Text(card.stateLabel)
                     .font(.system(size: 11))

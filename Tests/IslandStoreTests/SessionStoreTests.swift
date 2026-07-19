@@ -230,6 +230,41 @@ struct SessionStoreTests {
         #expect(store.sessions.first?.state == .ended)
     }
 
+    // MARK: - Session title (issue #32)
+
+    @Test("An event carrying a title publishes it on the Session")
+    func eventPublishesSessionTitle() {
+        let store = SessionStore()
+
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .promptSubmitted(prompt: "Go"),
+            cwd: "/Users/loic/Documents/island", agent: "claude-code",
+            title: "Fix the parser crash"))
+
+        #expect(store.sessions[0].title == "Fix the parser crash")
+    }
+
+    @Test("A later ai-title (rename) updates the Session title; a titleless event keeps the last one")
+    func titleUpdatesOnRenameAndSurvivesTitlelessEvents() {
+        let store = SessionStore()
+        func apply(_ kind: AgentEventKind, title: String? = nil) {
+            store.apply(AgentEvent(
+                sessionID: "abc123", kind: kind, cwd: "/tmp/demo",
+                agent: "claude-code", title: title))
+        }
+
+        apply(.promptSubmitted(prompt: "Go"), title: "Original title")
+        #expect(store.sessions[0].title == "Original title")
+
+        // A tool event without a readable title must not wipe the known one.
+        apply(.toolStarted(tool: "Bash"))
+        #expect(store.sessions[0].title == "Original title")
+
+        // A rename shows up as a fresh title on a later event.
+        apply(.toolFinished(tool: "Bash"), title: "Renamed by the user")
+        #expect(store.sessions[0].title == "Renamed by the user")
+    }
+
     // MARK: - Subagents and real-time state fidelity (issue #31)
 
     @Test("A Stop while a subagent is still running keeps the Session running, not ended")

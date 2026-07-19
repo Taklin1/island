@@ -50,6 +50,11 @@ public struct AgentEvent: Equatable, Sendable {
     /// Only meaningful on `.turnEnded`; `nil` when extraction failed — the
     /// event still flows (fallback: state + project).
     public let summary: TurnSummary?
+    /// Human-readable session title, extracted locally by the adapter (issue
+    /// #32, e.g. from the Claude Code `ai-title` record). `nil` when the
+    /// adapter could not read one on this event — the store then keeps the last
+    /// known title, and the UI falls back to the project folder name.
+    public let title: String?
 
     public init(
         sessionID: String,
@@ -57,7 +62,8 @@ public struct AgentEvent: Equatable, Sendable {
         cwd: String? = nil,
         terminal: String? = nil,
         agent: String,
-        summary: TurnSummary? = nil
+        summary: TurnSummary? = nil,
+        title: String? = nil
     ) {
         self.sessionID = sessionID
         self.kind = kind
@@ -65,6 +71,7 @@ public struct AgentEvent: Equatable, Sendable {
         self.terminal = terminal
         self.agent = agent
         self.summary = summary
+        self.title = title
     }
 }
 
