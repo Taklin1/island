@@ -121,4 +121,28 @@ struct SessionStoreTests {
 
         #expect(store.sessions.map(\.id) == ["busy"])
     }
+
+    @Test("A turnEnded event's summary is published on the Session, until the next prompt")
+    func turnEndedPublishesSummary() {
+        let store = SessionStore()
+        let summary = TurnSummary(
+            text: "Fixed the parser crash.",
+            todosDone: 1,
+            todosTotal: 3,
+            filesModified: ["/tmp/demo/Parser.swift"],
+            turnDuration: 200
+        )
+
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Fix it"), agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded, agent: "claude-code", summary: summary))
+        #expect(store.sessions.first?.lastSummary == summary)
+
+        // A turn without a readable transcript falls back to no summary…
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Again"), agent: "claude-code"))
+        // …and the stale summary never survives into the new turn.
+        #expect(store.sessions.first?.lastSummary == nil)
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded, agent: "claude-code"))
+        #expect(store.sessions.first?.lastSummary == nil)
+        #expect(store.sessions.first?.state == .ended)
+    }
 }

@@ -141,6 +141,40 @@ struct ClaudeCodeAdapterTests {
         #expect(event.agent == "claude-code")
     }
 
+    @Test("Stop reads the transcript at transcript_path and attaches the summary")
+    func stopAttachesTranscriptSummary() throws {
+        let transcript = FileManager.default.temporaryDirectory
+            .appendingPathComponent("adapter-stop-\(UUID().uuidString).jsonl")
+        try Data("""
+            {"isSidechain":false,"type":"user","message":{"role":"user","content":"Ship it"},"uuid":"u-1","timestamp":"2026-07-19T10:00:00.000Z"}
+            {"isSidechain":false,"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Shipped: the release is tagged."}]},"uuid":"a-1","timestamp":"2026-07-19T10:00:42.000Z"}
+            """.utf8).write(to: transcript)
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let payload = Data("""
+            {
+              "session_id": "abc123",
+              "transcript_path": "\(transcript.path)",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "Stop"
+            }
+            """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
+        #expect(event.kind == .turnEnded)
+        #expect(event.summary?.text == "Shipped: the release is tagged.")
+        #expect(event.summary?.turnDuration == 42)
+    }
+
+    @Test("Stop with an unreadable transcript still emits the event (fallback)")
+    func stopWithUnreadableTranscriptStillNotifies() throws {
+        // ADR-0002: the notification must always go out; a missing transcript
+        // only means no summary.
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))
+        #expect(event.kind == .turnEnded)
+        #expect(event.summary == nil)
+    }
+
     @Test("SubagentStop hook payload is ignored")
     func subagentStopIsIgnored() {
         #expect(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.subagentStop) == nil)
