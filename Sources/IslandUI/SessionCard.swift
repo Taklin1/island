@@ -89,6 +89,35 @@ struct SessionCard: Identifiable, Equatable {
         return "\(project) ✓ \(headline ?? "terminé")"
     }
 
+    /// The one-line Peek for a Session waiting on the user. When the wait comes
+    /// from a turn that ended on a question (#39, ADR-0006), show the question
+    /// itself — « projet · attend : "…?" » — so the answer is one glance away;
+    /// otherwise (a permission/AskUserQuestion wait, which carries no summary)
+    /// keep the historical call to action « projet ? attend une réponse ».
+    static func waitingPeekLine(project: String, questionText: String?, maxLength: Int = 80) -> String {
+        guard let question = questionText.flatMap(lastQuestionLine(of:)) else {
+            return "\(project) ? attend une réponse"
+        }
+        return "\(project) · attend : \"\(truncate(question, at: maxLength))\""
+    }
+
+    /// The final question line of an assistant message, when the message ends
+    /// on one (#39): the message is right-trimmed and kept only if it ends with
+    /// `?` (same rule the adapter used to classify the turn), then its last
+    /// non-empty line is returned so the Peek shows the question, not the lead-in.
+    private static func lastQuestionLine(of text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasSuffix("?") else { return nil }
+        for line in trimmed.split(separator: "\n").reversed() {
+            let stripped = line
+                .trimmingCharacters(in: .whitespaces)
+                .drop(while: { "#->*• ".contains($0) })
+                .trimmingCharacters(in: .whitespaces)
+            if !stripped.isEmpty { return stripped }
+        }
+        return nil
+    }
+
     /// First non-empty line, shedding markdown heading/list markers so the
     /// Peek reads as a sentence.
     private static func firstMeaningfulLine(of text: String) -> String? {

@@ -40,7 +40,12 @@ public enum ClaudeCodeAdapter {
         }
 
         // Any other hook fired inside a subagent (agent_id present) is ignored:
-        // only the main conversation drives a Session's lifecycle.
+        // only the main conversation drives a Session's lifecycle. This is what
+        // makes background subagents safe: a real turn spawning a subagent (the
+        // `Agent`/Task tool) keeps a session of its own, and all of its tool
+        // hooks carry an agent_id — they are dropped here and never touch the
+        // parent, so the parent resolves purely on its own Stop (#39, verified
+        // on a real case-4 capture: the parent's question Stop wins, orange).
         guard payload.agentID == nil else { return nil }
 
         let kind: AgentEventKind
@@ -60,14 +65,36 @@ public enum ClaudeCodeAdapter {
             guard let tool = payload.toolName else { return nil }
             kind = .toolFinished(tool: tool)
         case "Stop":
-            kind = .turnEnded
             // ADR-0002: summarize the turn by local extraction from the
-            // transcript. Best-effort only — on any failure the event still
-            // flows without a summary (fallback: state + project).
+            // transcript (todos, files, duration, and the last message text).
+            // Best-effort only — on any failure the event still flows without a
+            // summary (fallback: state + project).
             if let path = payload.transcriptPath {
                 summary = TranscriptReader.summary(
                     ofTranscriptAt: URL(fileURLWithPath: path))
             }
+            // The transcript file LAGS at Stop time: Claude Code's hooks docs
+            // warn it "might not yet include the current turn's most recent
+            // messages", and recommend using `last_assistant_message` from the
+            // payload for the final assistant text. That field is authoritative
+            // and race-free, so it wins over the (possibly stale) transcript
+            // text; the transcript still provides the structured facts. Older
+            // builds omit it → we keep the transcript text (#39, real repro).
+            if let message = payload.lastAssistantMessage, !message.isEmpty {
+                summary = TurnSummary(
+                    text: message,
+                    todosDone: summary?.todosDone,
+                    todosTotal: summary?.todosTotal,
+                    filesModified: summary?.filesModified ?? [],
+                    turnDuration: summary?.turnDuration
+                )
+            }
+            // #39 / ADR-0006: a turn whose last assistant message ends on a
+            // question ("?") is "attend", not "terminé". Detect it on that
+            // verbatim final text (right-trimmed) and let the store resolve it
+            // after the subagent gate. No interrogative-word scan (false
+            // positives); no signal (nil/empty text) ⇒ not a question.
+            kind = .turnEnded(awaitsReply: lastMessageIsQuestion(summary?.text))
         case "Notification":
             // Only notifications that actually block on the user (permission
             // request, question) put the Session in waiting; the idle
@@ -119,6 +146,11 @@ public enum ClaudeCodeAdapter {
         let toolName: String?
         /// Present only when the hook fires inside a subagent call.
         let agentID: String?
+        /// Stop hook only: the verbatim final assistant message of the turn.
+        /// Claude Code hands it in the payload precisely because the transcript
+        /// file may lag at Stop time — it is the authoritative, race-free source
+        /// for the final text (#39). Absent on older builds.
+        let lastAssistantMessage: String?
         /// Notification hook only: human-readable notification text.
         let message: String?
         /// Notification hook only. Claude Code's Notification types include
@@ -136,9 +168,22 @@ public enum ClaudeCodeAdapter {
             case prompt
             case toolName = "tool_name"
             case agentID = "agent_id"
+            case lastAssistantMessage = "last_assistant_message"
             case message
             case notificationType = "notification_type"
         }
+    }
+
+    /// Whether the turn's last assistant message ends on a question (#39,
+    /// ADR-0006). The rule is deliberately narrow: the verbatim text, trimmed
+    /// of surrounding whitespace/newlines, must end with `?`. No scan for
+    /// interrogative words (too many false positives), and no text at all
+    /// (extraction failed, or the turn produced no prose) means "not a
+    /// question" — the store then treats the turn as `.ended` (green), never
+    /// crying "attend" without a signal.
+    private static func lastMessageIsQuestion(_ text: String?) -> Bool {
+        guard let text else { return false }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?")
     }
 
     /// Whether a Notification actually blocks on the user — a permission

@@ -249,6 +249,202 @@ struct LocalServerTests {
         try await harness.waitUntil { $0.sessions.first?.state == .ended }
         #expect(harness.store.sessions[0].activeSubagentCount == 0)
     }
+
+    // MARK: - A turn ending on a question is "attend", not "terminé" (issue #39)
+
+    /// Writes a one-turn transcript whose last assistant message is `lastText`
+    /// and returns its URL — the adapter reads the question from the transcript
+    /// (ADR-0002), not from the hook's `last_assistant_message` field.
+    private func writeTranscript(lastAssistantText: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("island-q-\(UUID().uuidString).jsonl")
+        let encoded = String(data: try JSONEncoder().encode(lastAssistantText), encoding: .utf8)!
+        try Data("""
+            {"isSidechain":false,"type":"user","message":{"role":"user","content":"Go"},"uuid":"u-1","timestamp":"2026-07-19T10:00:00.000Z"}
+            {"isSidechain":false,"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":\(encoded)}]},"uuid":"a-1","timestamp":"2026-07-19T10:00:42.000Z"}
+            """.utf8).write(to: url)
+        return url
+    }
+
+    @Test("End to end: a turn ending on a question publishes a waiting Session, not terminated (#39)")
+    func stopEndingOnQuestionPublishesWaitingSession() async throws {
+        let harness = try await ServerHarness()
+        let transcript = try writeTranscript(
+            lastAssistantText: "I can target Postgres or SQLite. Which do you want?")
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let fixture = """
+        {
+          "session_id": "q1",
+          "transcript_path": "\(transcript.path)",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Stop"
+        }
+        """
+
+        _ = try await harness.postHook(fixture, token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .waiting }
+
+        let session = try #require(harness.store.sessions.first)
+        #expect(session.state == .waiting)        // orange, "attend" — not green
+        #expect(session.needsAcknowledgement)     // the Liseré lights
+        // The question is kept so the Peek can show it (« projet · attend : "…?" »).
+        #expect(session.lastSummary?.text == "I can target Postgres or SQLite. Which do you want?")
+    }
+
+    @Test("End to end: a turn ending on a constat still publishes a terminated Session (#39)")
+    func stopEndingOnConstatPublishesTerminatedSession() async throws {
+        let harness = try await ServerHarness()
+        let transcript = try writeTranscript(lastAssistantText: "Done — the release is tagged.")
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let fixture = """
+        {
+          "session_id": "c1",
+          "transcript_path": "\(transcript.path)",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Stop"
+        }
+        """
+
+        _ = try await harness.postHook(fixture, token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .ended }
+        #expect(harness.store.sessions[0].state == .ended)
+    }
+
+    @Test("End to end: a final question with a subagent in flight waits only after the last SubagentStop (#39)")
+    func questionWithSubagentWaitsAfterLastSubagentStopEndToEnd() async throws {
+        let harness = try await ServerHarness()
+        let transcript = try writeTranscript(lastAssistantText: "Ready to merge — proceed?")
+        defer { try? FileManager.default.removeItem(at: transcript) }
+        func hook(_ eventName: String, transcriptPath: String = "/tmp/qsub.jsonl", extra: String = "") -> String {
+            """
+            {
+              "session_id": "qsub",
+              "transcript_path": "\(transcriptPath)",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "\(eventName)"\(extra)
+            }
+            """
+        }
+
+        _ = try await harness.postHook(hook("UserPromptSubmit", extra: #", "prompt": "Prepare the merge""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .running }
+
+        _ = try await harness.postHook(hook("SubagentStart", extra: #", "agent_id": "sub-1", "agent_type": "Explore""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.activeSubagentCount == 1 }
+
+        // Main Stop ends on a question while the subagent is still running: the
+        // gate (#31) keeps it running — never orange mid-work.
+        _ = try await harness.postHook(hook("Stop", transcriptPath: transcript.path), token: harness.token)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(harness.store.sessions[0].state == .running)
+
+        // Last subagent stops: the deferred completion inherits the question
+        // and waits (orange), it does not end (green).
+        _ = try await harness.postHook(hook("SubagentStop", extra: #", "agent_id": "sub-1", "agent_type": "Explore""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .waiting }
+        #expect(harness.store.sessions[0].needsAcknowledgement)
+    }
+
+    @Test("End to end REAL REPRO: a lagging transcript still publishes waiting via last_assistant_message (#39)")
+    func laggingTranscriptStillPublishesWaitingViaPayload() async throws {
+        let harness = try await ServerHarness()
+        // The transcript LAGS at Stop (Claude Code docs): its last assistant
+        // text is still the OLD constat, while the payload's authoritative
+        // last_assistant_message is the fresh question. The Session must still
+        // land orange "attend" — the real FP that failed before the fix.
+        let stale = try writeTranscript(lastAssistantText: "Working on it.")
+        defer { try? FileManager.default.removeItem(at: stale) }
+
+        let fixture = """
+        {
+          "session_id": "lag1",
+          "transcript_path": "\(stale.path)",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Stop",
+          "last_assistant_message": "Postgres or SQLite — which do you want?"
+        }
+        """
+
+        _ = try await harness.postHook(fixture, token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .waiting }
+        let session = try #require(harness.store.sessions.first)
+        #expect(session.state == .waiting)
+        #expect(session.needsAcknowledgement)
+        #expect(session.lastSummary?.text == "Postgres or SQLite — which do you want?")
+    }
+
+    // MARK: - Case 4 replayed from the REAL capture: an Agent background subagent (#39)
+
+    @Test("REAL CAPTURE: an Agent-subagent turn ending on a question publishes waiting, the subagent's own hooks ignored (#39 case 4)")
+    func agentSubagentTurnEndingOnQuestionWaits() async throws {
+        let harness = try await ServerHarness()
+        let p = "parent-ed31"
+        func hook(_ event: String, extra: String = "") -> String {
+            """
+            {
+              "session_id": "\(p)",
+              "transcript_path": "/tmp/\(p).jsonl",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "\(event)"\(extra)
+            }
+            """
+        }
+
+        // The exact captured case-4 sequence (session ed31cce6, log lines
+        // 141-155): a prompt, the `Agent` background-subagent spawn tool (a
+        // plain main-session tool — NOT the never-installed SubagentStart, NOT
+        // the wrongly-guessed Task gate), the subagent's own tool hook carrying
+        // an agent_id (dropped), then the main Stop carrying the question.
+        _ = try await harness.postHook(hook("UserPromptSubmit", extra: #", "prompt": "lance un sous-agent et termine par une question""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .running }
+
+        _ = try await harness.postHook(hook("PreToolUse", extra: #", "tool_name": "Agent", "tool_input": {"description": "sous-agent bidon"}"#), token: harness.token)
+        _ = try await harness.postHook(hook("PostToolUse", extra: #", "tool_name": "Agent""#), token: harness.token)
+
+        // The background subagent's own tool call (agent_id present) must be
+        // dropped — never touching the parent (log lines 175/179/193/194).
+        _ = try await harness.postHook(hook("PreToolUse", extra: #", "tool_name": "Bash", "agent_id": "aagent-bidon""#), token: harness.token)
+
+        // The main agent asks its question and stops. The transcript may lag, so
+        // the question rides on last_assistant_message (the #39 real fix): the
+        // parent resolves ORANGE on its OWN Stop, regardless of the subagent.
+        _ = try await harness.postHook(hook("Stop", extra: #", "last_assistant_message": "tu veux que je l'arrête tout de suite ?""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .waiting }
+
+        #expect(harness.store.sessions.count == 1)  // the agent_id hook created no second Session
+        let session = try #require(harness.store.sessions.first)
+        #expect(session.state == .waiting)
+        #expect(session.needsAcknowledgement)
+        #expect(session.lastSummary?.text == "tu veux que je l'arrête tout de suite ?")
+    }
+
+    @Test("REAL CAPTURE: an Agent-subagent turn ending on a constat publishes ended (#39 case 4 contrast)")
+    func agentSubagentTurnEndingOnConstatEnds() async throws {
+        let harness = try await ServerHarness()
+        let p = "parent-ed32"
+        func hook(_ event: String, extra: String = "") -> String {
+            """
+            {
+              "session_id": "\(p)",
+              "transcript_path": "/tmp/\(p).jsonl",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "\(event)"\(extra)
+            }
+            """
+        }
+
+        _ = try await harness.postHook(hook("UserPromptSubmit", extra: #", "prompt": "lance un sous-agent et ne termine PAS par une question""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .running }
+        _ = try await harness.postHook(hook("PreToolUse", extra: #", "tool_name": "Agent""#), token: harness.token)
+        _ = try await harness.postHook(hook("PostToolUse", extra: #", "tool_name": "Agent""#), token: harness.token)
+        _ = try await harness.postHook(hook("PreToolUse", extra: #", "tool_name": "Bash", "agent_id": "aagent-bidon""#), token: harness.token)
+        _ = try await harness.postHook(hook("Stop", extra: #", "last_assistant_message": "Dis-moi quand tu veux que je l'arrête.""#), token: harness.token)
+
+        try await harness.waitUntil { $0.sessions.first?.state == .ended }
+        #expect(harness.store.sessions.count == 1)
+    }
 }
 
 /// Boots a LocalServer on an ephemeral port, wired exactly like the app:

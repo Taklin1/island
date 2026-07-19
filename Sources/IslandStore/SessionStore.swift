@@ -38,6 +38,11 @@ public struct Session: Identifiable, Equatable, Sendable {
     /// Session only becomes `.ended` once this is true *and* no subagent is
     /// still running — a SubagentStop can arrive after the main Stop (#31).
     public var mainTurnFinished: Bool
+    /// Whether the main turn ended on a question (`?`, issue #39 / ADR-0006).
+    /// Transient, like ``mainTurnFinished``: recorded at the main Stop so the
+    /// deferred completion (last SubagentStop) inherits the same choice —
+    /// question ⇒ `.waiting` (orange), constat ⇒ `.ended` (green).
+    public var mainTurnAwaitsReply: Bool
 
     /// Human-readable project name: last path component of the cwd.
     public var projectName: String {
@@ -59,7 +64,8 @@ public struct Session: Identifiable, Equatable, Sendable {
         lastActivityAt: Date = Date(),
         needsAcknowledgement: Bool = false,
         activeSubagentCount: Int = 0,
-        mainTurnFinished: Bool = false
+        mainTurnFinished: Bool = false,
+        mainTurnAwaitsReply: Bool = false
     ) {
         self.id = id
         self.state = state
@@ -75,6 +81,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         self.needsAcknowledgement = needsAcknowledgement
         self.activeSubagentCount = activeSubagentCount
         self.mainTurnFinished = mainTurnFinished
+        self.mainTurnAwaitsReply = mainTurnAwaitsReply
     }
 }
 
@@ -180,8 +187,10 @@ public final class SessionStore: ObservableObject {
             session.needsAcknowledgement = false
             session.lastSummary = nil
             // A new prompt is a fresh turn: the previous main Stop no longer
-            // counts against the subagents still being tracked (#31).
+            // counts against the subagents still being tracked (#31), and the
+            // previous turn's question is stale (#39).
             session.mainTurnFinished = false
+            session.mainTurnAwaitsReply = false
         case let .toolStarted(tool):
             session.state = .running
             session.currentTool = tool
@@ -191,17 +200,20 @@ public final class SessionStore: ObservableObject {
             }
         case .toolFinished:
             session.currentTool = nil
-        case .turnEnded:
+        case let .turnEnded(awaitsReply):
             // The main turn's Stop fired. But it is only "terminée" once every
             // subagent has stopped too — a Stop with subagents in flight keeps
-            // the Session "en cours" (root cause C, #31).
+            // the Session "en cours" (root cause C, #31). Once resolvable, a
+            // turn that ended on a question waits (orange) instead of ending
+            // (green) — "détecter puis résoudre" (#39, ADR-0006).
             session.currentTool = nil
             session.lastSummary = event.summary
             session.mainTurnFinished = true
+            session.mainTurnAwaitsReply = awaitsReply
             if session.activeSubagentCount > 0 {
                 session.state = .running
             } else {
-                session.state = .ended
+                session.state = awaitsReply ? .waiting : .ended
                 session.turnStartedAt = nil
                 session.needsAcknowledgement = true
             }
@@ -213,6 +225,7 @@ public final class SessionStore: ObservableObject {
                 session.state = .running
                 session.needsAcknowledgement = false
                 session.mainTurnFinished = false
+                session.mainTurnAwaitsReply = false
             }
         case .subagentStopped:
             session.activeSubagentCount = max(0, session.activeSubagentCount - 1)
@@ -222,8 +235,10 @@ public final class SessionStore: ObservableObject {
                 // Last subagent gone and the main turn already ended: only now
                 // is the turn truly finished — this Stop may arrive after the
                 // main one (#31). Guarded to `.running` so it never clobbers a
-                // genuine block ("?") that appeared during the wrap-up.
-                session.state = .ended
+                // genuine block ("?") that appeared during the wrap-up. The
+                // deferred completion inherits the main turn's choice: a turn
+                // that ended on a question waits, it does not end (#39).
+                session.state = session.mainTurnAwaitsReply ? .waiting : .ended
                 session.currentTool = nil
                 session.turnStartedAt = nil
                 session.needsAcknowledgement = true

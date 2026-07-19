@@ -156,4 +156,33 @@ struct SessionPresentationTests {
         // No summary: the Peek keeps its historical fallback.
         #expect(SessionCard.peekLine(project: "island", summaryText: nil) == "island ✓ terminé")
     }
+
+    @Test("The waiting Peek shows a final question, or the call to action (#39)")
+    func waitingPeekShowsTheQuestion() {
+        // A turn ending on a question: show the question itself.
+        #expect(
+            SessionCard.waitingPeekLine(project: "island", questionText: "Postgres or SQLite?")
+                == "island · attend : \"Postgres or SQLite?\"")
+
+        // The final question line wins over an earlier lead-in line.
+        #expect(
+            SessionCard.waitingPeekLine(
+                project: "island",
+                questionText: "I looked into it.\nShall I proceed with option A?")
+                == "island · attend : \"Shall I proceed with option A?\"")
+
+        // No question (nil, or a text that does not end on '?'): the historical
+        // call to action — a permission/AskUserQuestion wait carries no question.
+        #expect(SessionCard.waitingPeekLine(project: "island", questionText: nil)
+            == "island ? attend une réponse")
+        #expect(SessionCard.waitingPeekLine(project: "island", questionText: "All done.")
+            == "island ? attend une réponse")
+
+        // A very long question is cut on a word boundary with an ellipsis.
+        let long = SessionCard.waitingPeekLine(
+            project: "island",
+            questionText: String(repeating: "word ", count: 40) + "?")
+        #expect(long.count <= 105)
+        #expect(long.hasSuffix("…\""))
+    }
 }
