@@ -1,1 +1,146 @@
+import Foundation
 import Testing
+import ClaudeCodeAdapter
+import IslandServer
+import IslandStore
+
+/// Integration tests of the local server seam (PRD #3, Testing Decisions):
+/// POST real hook fixtures over HTTP and assert the published Sessions —
+/// never the internals.
+@MainActor
+struct LocalServerTests {
+    static let stopFixture = """
+    {
+      "session_id": "abc123",
+      "transcript_path": "/Users/loic/.claude/projects/-Users-loic-Documents-island/abc123.jsonl",
+      "cwd": "/Users/loic/Documents/island",
+      "permission_mode": "default",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Done."
+    }
+    """
+
+    @Test("POSTing a Stop fixture with a valid token publishes a terminated Session")
+    func stopFixturePublishesTerminatedSession() async throws {
+        let harness = try await ServerHarness()
+
+        let (status, _) = try await harness.postHook(Self.stopFixture, token: harness.token)
+
+        #expect(status == 200)
+        try await harness.waitUntil { !$0.sessions.isEmpty }
+        #expect(harness.store.sessions.count == 1)
+        #expect(harness.store.sessions[0].id == "abc123")
+        #expect(harness.store.sessions[0].state == .ended)
+        #expect(harness.store.sessions[0].projectName == "island")
+    }
+
+    @Test("The token is also accepted in the X-Island-Token header")
+    func tokenAcceptedInHeader() async throws {
+        let harness = try await ServerHarness()
+
+        let (status, _) = try await harness.postHook(
+            Self.stopFixture,
+            token: harness.token,
+            tokenInHeader: true
+        )
+
+        #expect(status == 200)
+        try await harness.waitUntil { !$0.sessions.isEmpty }
+        #expect(harness.store.sessions[0].state == .ended)
+    }
+
+    @Test("A request without a valid token gets 401 and publishes nothing")
+    func invalidTokenIsRejected() async throws {
+        let harness = try await ServerHarness()
+
+        let (missing, _) = try await harness.postHook(Self.stopFixture, token: nil)
+        let (wrong, _) = try await harness.postHook(Self.stopFixture, token: "wrong-token")
+
+        #expect(missing == 401)
+        #expect(wrong == 401)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(harness.store.sessions.isEmpty)
+    }
+
+    @Test("A SubagentStop fixture is acknowledged but publishes nothing")
+    func subagentStopIsIgnored() async throws {
+        let harness = try await ServerHarness()
+        let fixture = Self.stopFixture.replacingOccurrences(
+            of: #""hook_event_name": "Stop""#,
+            with: #""hook_event_name": "SubagentStop""#
+        )
+
+        let (status, _) = try await harness.postHook(fixture, token: harness.token)
+
+        #expect(status == 200)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(harness.store.sessions.isEmpty)
+    }
+}
+
+/// Boots a LocalServer on an ephemeral port, wired exactly like the app:
+/// Claude Code adapter → session store on the main actor.
+@MainActor
+final class ServerHarness {
+    let store = SessionStore()
+    let token = "test-token-\(UUID().uuidString)"
+    let server: LocalServer
+    let port: UInt16
+
+    init() async throws {
+        let store = store
+        server = LocalServer(
+            port: 0,
+            token: token,
+            translate: ClaudeCodeAdapter.event(fromHookPayload:),
+            publish: { event in
+                Task { @MainActor in store.apply(event) }
+            }
+        )
+        port = try await server.start()
+    }
+
+    deinit {
+        server.stop()
+    }
+
+    func postHook(
+        _ body: String,
+        token: String?,
+        tokenInHeader: Bool = false
+    ) async throws -> (status: Int, body: Data) {
+        var components = URLComponents(string: "http://127.0.0.1:\(port)/hooks/claude-code")!
+        if let token, !tokenInHeader {
+            components.queryItems = [URLQueryItem(name: "token", value: token)]
+        }
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        request.httpBody = Data(body.utf8)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token, tokenInHeader {
+            request.setValue(token, forHTTPHeaderField: "X-Island-Token")
+        }
+        request.timeoutInterval = 5
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return ((response as! HTTPURLResponse).statusCode, data)
+    }
+
+    /// Polls the store (the server answers before the store publishes).
+    func waitUntil(
+        timeout: TimeInterval = 2,
+        _ condition: @MainActor (SessionStore) -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(store) {
+            guard Date() < deadline else {
+                throw HarnessError.timedOutWaitingForStore
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    enum HarnessError: Error {
+        case timedOutWaitingForStore
+    }
+}
