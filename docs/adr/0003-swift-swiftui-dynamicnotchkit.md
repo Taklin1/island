@@ -1,5 +1,7 @@
 # Swift + SwiftUI + DynamicNotchKit pour l'Island
 
+> **Statut (2026-07-19)** : le choix Swift/SwiftUI + DynamicNotchKit **vendoré** reste en vigueur. En revanche la décision d'y **forcer le style `.notch`** (Island toujours visible — dernière phrase des _Consequences_) est **remplacée par [ADR-0007](0007-island-flottante-masquee-par-defaut.md)** : l'Island passe en style `.floating`, **masquée par défaut**.
+
 App native Swift/SwiftUI. Le rendu de l'Island s'appuie sur DynamicNotchKit (MIT) : panneau flottant, animations expand/collapse, fallback natif pour les Macs sans encoche — la machine cible (MacBook Air M1) n'en a pas, l'Island est donc toujours flottante top-center.
 
 ## Considered Options
