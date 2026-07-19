@@ -48,3 +48,47 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
   invérifiable en agentique et les FP/HP concluraient « visuel non testé »
   alors qu'un screenshot suffit. Attention : déplacer la souris pendant que
   Loïc travaille est intrusif ; le faire vite et remettre le curseur ailleurs.
+
+## Fichiers de config réels : backup + restauration byte-exacte
+
+- **Découverte** : un FP qui exerce l'installeur (#6) ou le tee statusline (#9)
+  écrit dans les VRAIS `~/.claude/settings.json` / `statusline-command.sh` de
+  Loïc. Restaurer aveuglément sur la baseline de début de campagne écrase toute
+  modification que Loïc fait EN parallèle (la campagne HP a vu son `"model"`
+  passer de `fable` à `opus` en plein run).
+- **Bonne méthode** : backup horodaté + `shasum -a 256` AVANT toute écriture ;
+  à la fin, restaurer sur le **dernier état pré-intervention** (re-lu juste avant
+  ta modif), pas sur la baseline ; vérifier par `cmp -s`. Poser
+  `defaults write Island hooksInstallAttempted -bool true` avant de lancer l'app
+  empêche l'auto-installation de toucher `settings.json` quand tu ne testes pas
+  l'installeur lui-même (`defaults delete Island` en fin de campagne).
+- **Preuve** (HP 2026-07-19) : diff détecté sur `settings.json`, changement de
+  Loïc préservé, `cmp` final vert ; smoke post-sprites lancé sous ce flag →
+  `settings.json` byte-identique au backup.
+- **Pourquoi** : sécurité — c'est la config vivante de Loïc, une restauration
+  naïve détruit son travail sans trace.
+
+## Port 41414 : sérialiser les FP d'une même vague
+
+- **Découverte** : le Serveur local bind un port FIXE (41414). Plusieurs FP
+  d'agents parallèles qui lancent chacun l'app entrent en collision sur ce port.
+- **Bonne méthode** : un seul FP tient le port à la fois — `pkill -f
+  ".build/debug/Island"` avant de lancer le tien, ou `lsof -nP -iTCP:41414
+  -sTCP:LISTEN` pour voir qui l'occupe et attendre. En orchestration, la flotte
+  se sérialise d'elle-même (un agent libère le port pour le suivant).
+- **Preuve** (vague 3, 2026-07-19) : FP #9 « sérialisé derrière le FP d'une
+  autre sous-issue qui tenait le port », puis vert une fois le port libre.
+- **Pourquoi** : fiabilité — un FP qui échoue à bind conclut à tort « l'app ne
+  démarre pas » alors que c'est juste une collision de port.
+
+## Login item : SMAppService exige un bundle .app
+
+- **Découverte** : `SMAppService.register()` renvoie `Invalid argument` depuis
+  le binaire SwiftPM nu (`.build/debug/Island`) — normal, pas un bug.
+- **Bonne méthode** : ne pas conclure à l'échec ; le login item ne se teste que
+  depuis un vrai bundle `.app`. En FP, tracer le comportement et le marquer
+  comme observation non bloquante.
+- **Preuve** (FP #6 + HP, 2026-07-19) : trace `registration unavailable:
+  Invalid argument` sur le binaire nu, code par ailleurs correct.
+- **Pourquoi** : justesse — sans cette note, chaque campagne re-signale un faux
+  échec du login item.

@@ -176,6 +176,26 @@ struct HookInstallerTests {
         #expect(try fixture.rawBytes() == before)
     }
 
+    /// Regression guard (FP #6): a backgrounded job's stdin is /dev/null under
+    /// POSIX, so the hook command MUST capture the payload in the foreground
+    /// before backgrounding curl. A "simplification" back to `--data-binary @-`
+    /// would silently POST empty bodies with no other test noticing.
+    @Test("The generated hook command captures stdin before backgrounding curl")
+    func hookCommandCapturesStdinBeforeBackgrounding() throws {
+        let command = HookInstaller.defaultCommand
+        let capture = try #require(command.range(of: "payload=$(cat);"))
+        let curl = try #require(command.range(of: "curl "))
+        // The capture must come before curl is invoked.
+        #expect(capture.upperBound <= curl.lowerBound)
+        // The body is passed from the captured variable, never read from stdin.
+        #expect(command.contains(#"--data-binary "$payload""#))
+        #expect(!command.contains("@-"))
+        // Fire-and-forget: time-bounded and backgrounded, so Claude Code is
+        // never blocked when the app is down.
+        #expect(command.contains("--max-time"))
+        #expect(command.hasSuffix("&"))
+    }
+
     static func isIslandEntry(_ entry: [String: Any]) -> Bool {
         entryCommands(entry).contains { $0.contains("127.0.0.1:41414/hooks/claude-code") }
     }
