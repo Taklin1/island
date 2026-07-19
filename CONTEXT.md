@@ -45,6 +45,10 @@ Action utilisateur qui éteint le Liseré et le Peek associés à une Session : 
 **Résumé** :
 Ce que l'Island affiche d'un tour terminé : extrait local du transcript (dernier message assistant, todos, fichiers modifiés). Jamais généré par un appel LLM.
 
+**Titre de session** :
+Le titre Claude Code d'une Session, affiché en haut de sa carte Étendue (le chemin du projet en dessous). Extrait localement du transcript (enregistrement `ai-title`, le dernier gagne), jamais généré par un appel LLM ; reflète `/rename`. Repli sur le nom du dossier tant qu'aucun titre n'existe. Relu à chaque Événement et à l'ouverture Étendue — `/rename` n'émet pas de hook, donc un titre changé sur une Session au repos n'apparaît qu'au survol.
+_Avoid_ : nom de session, label
+
 **Quotas** :
 Jauges d'usage Claude (fenêtres 5 h et 7 jours, % de contexte) reçues via le tee de la statusline.
 
