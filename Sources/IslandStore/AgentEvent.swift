@@ -1,3 +1,36 @@
+import Foundation
+
+/// What the Island shows of a finished turn (ADR-0002): facts extracted
+/// locally by an adapter from its own artifacts (e.g. the Claude Code
+/// transcript), never produced by an LLM call. Every field is optional —
+/// extraction is best-effort and the event must flow even when it fails.
+public struct TurnSummary: Equatable, Sendable {
+    /// Last assistant message of the main turn, verbatim.
+    public let text: String?
+    /// Completed todos at the end of the turn, when the agent kept a list.
+    public let todosDone: Int?
+    /// Total todos at the end of the turn, when the agent kept a list.
+    public let todosTotal: Int?
+    /// Files the agent modified during the turn (absolute paths, in order).
+    public let filesModified: [String]
+    /// Wall-clock duration of the turn, when both ends could be timestamped.
+    public let turnDuration: TimeInterval?
+
+    public init(
+        text: String? = nil,
+        todosDone: Int? = nil,
+        todosTotal: Int? = nil,
+        filesModified: [String] = [],
+        turnDuration: TimeInterval? = nil
+    ) {
+        self.text = text
+        self.todosDone = todosDone
+        self.todosTotal = todosTotal
+        self.filesModified = filesModified
+        self.turnDuration = turnDuration
+    }
+}
+
 /// Generic event schema (ADR-0004).
 ///
 /// The store and the UI only ever see this vocabulary; anything specific to a
@@ -13,19 +46,25 @@ public struct AgentEvent: Equatable, Sendable {
     public let terminal: String?
     /// Which agent tool produced the event (e.g. "claude-code").
     public let agent: String
+    /// What the turn produced, extracted locally by the adapter (ADR-0002).
+    /// Only meaningful on `.turnEnded`; `nil` when extraction failed — the
+    /// event still flows (fallback: state + project).
+    public let summary: TurnSummary?
 
     public init(
         sessionID: String,
         kind: AgentEventKind,
         cwd: String? = nil,
         terminal: String? = nil,
-        agent: String
+        agent: String,
+        summary: TurnSummary? = nil
     ) {
         self.sessionID = sessionID
         self.kind = kind
         self.cwd = cwd
         self.terminal = terminal
         self.agent = agent
+        self.summary = summary
     }
 }
 
