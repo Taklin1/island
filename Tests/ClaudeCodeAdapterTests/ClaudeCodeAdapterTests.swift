@@ -209,6 +209,50 @@ struct ClaudeCodeAdapterTests {
         #expect(ClaudeCodeAdapter.event(fromHookPayload: Data(subagentPayload.utf8)) == nil)
     }
 
+    @Test("Notification hook payload (permission request) becomes a 'waiting for user' event")
+    func notificationBecomesWaitingForUser() throws {
+        let fixture = Data("""
+        {
+          "session_id": "abc123",
+          "transcript_path": "/tmp/abc123.jsonl",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Notification",
+          "notification_type": "permission_prompt",
+          "message": "Claude needs your permission to use Bash"
+        }
+        """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: fixture))
+
+        #expect(event.sessionID == "abc123")
+        #expect(event.kind == .waitingForUser(message: "Claude needs your permission to use Bash"))
+    }
+
+    @Test("Informational notifications (auth_success) never put the Session in waiting")
+    func informationalNotificationIsIgnored() {
+        let fixture = Data("""
+        {
+          "session_id": "abc123",
+          "transcript_path": "/tmp/abc123.jsonl",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "Notification",
+          "notification_type": "auth_success",
+          "message": "Authentication successful"
+        }
+        """.utf8)
+
+        #expect(ClaudeCodeAdapter.event(fromHookPayload: fixture) == nil)
+    }
+
+    @Test("Events carry the terminal hosting the Session, defaulting to ghostty")
+    func eventsCarryDefaultTerminal() throws {
+        // The hook payload has no terminal field yet: the adapter (and only
+        // the adapter, ADR-0004) supplies the v1 default.
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))
+
+        #expect(event.terminal == "ghostty")
+    }
+
     @Test("Unreadable payload is ignored instead of crashing")
     func unreadablePayloadIsIgnored() {
         #expect(ClaudeCodeAdapter.event(fromHookPayload: Data("not json".utf8)) == nil)

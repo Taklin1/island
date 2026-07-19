@@ -1,5 +1,7 @@
 import AppKit
 import ClaudeCodeAdapter
+import IslandFocus
+import IslandGlow
 import IslandInstaller
 import IslandServer
 import IslandStore
@@ -17,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = AppSettings()
     private var server: LocalServer?
     private var controller: IslandController?
+    private var glow: GlowController?
+    private var focusAcknowledger: TerminalFocusAcknowledger?
     private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -45,9 +49,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let port = try await server.start()
                 print("island: listening on http://127.0.0.1:\(port) (token: ~/.claude/island-token)")
 
-                let controller = IslandController(store: store, quotaStore: quotaStore)
+                let controller = IslandController(
+                    store: store,
+                    quotaStore: quotaStore,
+                    focusTerminal: { TerminalFocuser.live.focus(terminal: $0) }
+                )
                 self.controller = controller
                 await controller.activate()
+
+                // Liseré (issue #8): reads the preference live on each change.
+                let glow = GlowController(
+                    store: store,
+                    isEnabled: { [settings] in settings.borderEnabled }
+                )
+                self.glow = glow
+                glow.activate()
+
+                // Acknowledgement by terminal focus (issue #8).
+                let focusAcknowledger = TerminalFocusAcknowledger(store: store)
+                self.focusAcknowledger = focusAcknowledger
+                focusAcknowledger.start()
             } catch {
                 fputs("island: failed to start local server: \(error)\n", stderr)
                 NSApplication.shared.terminate(nil)
@@ -218,6 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.borderEnabled.toggle()
         sender.state = settings.borderEnabled ? .on : .off
         print("island: preference borderEnabled=\(settings.borderEnabled)")
+        glow?.refresh()
     }
 
     @objc private func toggleSound(_ sender: NSMenuItem) {

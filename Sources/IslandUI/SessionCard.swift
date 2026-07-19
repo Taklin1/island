@@ -108,6 +108,7 @@ struct SessionCard: Identifiable, Equatable {
         case .idle: ("démarrée", "○")
         case .running: ("en cours", "●")
         case .ended: ("terminée", "✓")
+        case .waiting: ("attend", "?")
         }
     }
 

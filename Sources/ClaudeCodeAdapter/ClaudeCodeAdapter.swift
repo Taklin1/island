@@ -11,6 +11,11 @@ public enum ClaudeCodeAdapter {
     /// Name reported in generic events for sessions driven by Claude Code.
     public static let agentName = "claude-code"
 
+    /// Terminal reported on every event. The hook payload carries no terminal
+    /// information yet, so the adapter supplies the v1 default (ADR-0004:
+    /// tool-specific defaults never leak past the adapter).
+    public static let defaultTerminal = "ghostty"
+
     /// Translates a raw hook payload into a generic event.
     ///
     /// - Returns: the generic event, or `nil` when the payload is not valid
@@ -49,6 +54,12 @@ public enum ClaudeCodeAdapter {
                 summary = TranscriptReader.summary(
                     ofTranscriptAt: URL(fileURLWithPath: path))
             }
+        case "Notification":
+            // Only notifications that actually block on the user (permission
+            // request, question) put the Session in waiting; informational
+            // ones (auth_success…) are ignored.
+            guard isWaitingNotification(payload.notificationType) else { return nil }
+            kind = .waitingForUser(message: payload.message)
         default:
             // SubagentStart/SubagentStop (and any future unhandled hook) are
             // deliberately ignored.
@@ -59,6 +70,7 @@ public enum ClaudeCodeAdapter {
             sessionID: payload.sessionID,
             kind: kind,
             cwd: payload.cwd,
+            terminal: defaultTerminal,
             agent: agentName,
             summary: summary
         )
@@ -75,6 +87,10 @@ public enum ClaudeCodeAdapter {
         let toolName: String?
         /// Present only when the hook fires inside a subagent call.
         let agentID: String?
+        /// Notification hook only: human-readable notification text.
+        let message: String?
+        /// Notification hook only: e.g. "permission_prompt", "idle_prompt".
+        let notificationType: String?
 
         enum CodingKeys: String, CodingKey {
             case sessionID = "session_id"
@@ -84,6 +100,20 @@ public enum ClaudeCodeAdapter {
             case prompt
             case toolName = "tool_name"
             case agentID = "agent_id"
+            case message
+            case notificationType = "notification_type"
         }
+    }
+
+    /// Whether a Notification actually blocks on the user. Unknown or absent
+    /// types are treated as blocking: better a Liseré to acknowledge than a
+    /// stuck agent nobody notices.
+    private static func isWaitingNotification(_ type: String?) -> Bool {
+        guard let type else { return true }
+        let nonBlocking: Set<String> = [
+            "auth_success", "elicitation_complete", "elicitation_response",
+            "agent_completed",
+        ]
+        return !nonBlocking.contains(type)
     }
 }

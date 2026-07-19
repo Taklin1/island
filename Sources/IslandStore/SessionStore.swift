@@ -10,6 +10,8 @@ public struct Session: Identifiable, Equatable, Sendable {
     public var cwd: String?
     /// Which agent tool drives this session (e.g. "claude-code").
     public let agent: String
+    /// Terminal hosting the session (e.g. "ghostty"), when known.
+    public var terminal: String?
     /// Last prompt the user submitted, when known.
     public var lastPrompt: String?
     /// Tool currently running, when the agent is inside a tool call.
@@ -21,6 +23,9 @@ public struct Session: Identifiable, Equatable, Sendable {
     public var lastSummary: TurnSummary?
     /// Last time any event touched this session (drives orphan expiry).
     public var lastActivityAt: Date
+    /// True while a marking event (waiting / turn ended) has not been
+    /// Acknowledged by the user. Drives the Liseré.
+    public var needsAcknowledgement: Bool
 
     /// Human-readable project name: last path component of the cwd.
     public var projectName: String {
@@ -33,21 +38,25 @@ public struct Session: Identifiable, Equatable, Sendable {
         state: SessionState,
         cwd: String? = nil,
         agent: String,
+        terminal: String? = nil,
         lastPrompt: String? = nil,
         currentTool: String? = nil,
         turnStartedAt: Date? = nil,
         lastSummary: TurnSummary? = nil,
-        lastActivityAt: Date = Date()
+        lastActivityAt: Date = Date(),
+        needsAcknowledgement: Bool = false
     ) {
         self.id = id
         self.state = state
         self.cwd = cwd
         self.agent = agent
+        self.terminal = terminal
         self.lastPrompt = lastPrompt
         self.currentTool = currentTool
         self.turnStartedAt = turnStartedAt
         self.lastSummary = lastSummary
         self.lastActivityAt = lastActivityAt
+        self.needsAcknowledgement = needsAcknowledgement
     }
 }
 
@@ -121,6 +130,9 @@ public final class SessionStore: ObservableObject {
         if let cwd = event.cwd {
             session.cwd = cwd
         }
+        if let terminal = event.terminal {
+            session.terminal = terminal
+        }
         session.lastActivityAt = timestamp
 
         switch event.kind {
@@ -133,10 +145,12 @@ public final class SessionStore: ObservableObject {
             session.lastPrompt = prompt
             session.currentTool = nil
             session.turnStartedAt = timestamp
+            session.needsAcknowledgement = false
             session.lastSummary = nil
         case let .toolStarted(tool):
             session.state = .running
             session.currentTool = tool
+            session.needsAcknowledgement = false
             if session.turnStartedAt == nil {
                 session.turnStartedAt = timestamp
             }
@@ -146,13 +160,49 @@ public final class SessionStore: ObservableObject {
             session.state = .ended
             session.currentTool = nil
             session.turnStartedAt = nil
+            session.needsAcknowledgement = true
             session.lastSummary = event.summary
+        case .waitingForUser:
+            session.state = .waiting
+            session.needsAcknowledgement = true
         }
 
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {
             sessions[index] = session
         } else {
             sessions.append(session)
+        }
+    }
+
+    // MARK: - Acknowledgement (issues #8 / #10)
+
+    /// Hovering the Island acknowledges every pending Session at once.
+    public func acknowledgeAll() {
+        acknowledge { _ in true }
+    }
+
+    /// Clicking a card (or its Peek) acknowledges that one Session.
+    public func acknowledge(sessionID: String) {
+        acknowledge { $0.id == sessionID }
+    }
+
+    /// Focusing a terminal acknowledges the Sessions it hosts.
+    public func acknowledge(terminal: String) {
+        acknowledge { $0.terminal == terminal }
+    }
+
+    /// Clears the flag without ever touching the Session state itself: a
+    /// waiting Session stays waiting, only the Liseré goes out.
+    private func acknowledge(where matches: (Session) -> Bool) {
+        var changed = false
+        var updated = sessions
+        for index in updated.indices where updated[index].needsAcknowledgement && matches(updated[index]) {
+            updated[index].needsAcknowledgement = false
+            changed = true
+        }
+        // Publish once, and only when something actually changed.
+        if changed {
+            sessions = updated
         }
     }
 }

@@ -107,6 +107,90 @@ struct SessionStoreTests {
         #expect(store.sessions.map(\.id) == ["alive"])
     }
 
+    // MARK: - Waiting state and Acknowledgement (issues #8 / #10)
+
+    @Test("A waitingForUser event puts the Session in waiting, pending Acknowledgement")
+    func waitingForUserAwaitsAcknowledgement() {
+        let store = SessionStore()
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Go"), agent: "claude-code"))
+
+        store.apply(AgentEvent(
+            sessionID: "abc123",
+            kind: .waitingForUser(message: "Claude needs your permission to use Bash"),
+            agent: "claude-code"
+        ))
+
+        #expect(store.sessions[0].state == .waiting)
+        #expect(store.sessions[0].needsAcknowledgement)
+    }
+
+    @Test("Answering (prompt or tool resuming) leaves waiting and clears the Acknowledgement flag")
+    func answeringClearsWaitingAndAcknowledgement() {
+        let store = SessionStore()
+        store.apply(AgentEvent(sessionID: "abc123", kind: .waitingForUser(message: "May I?"), agent: "claude-code"))
+
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "yes"), agent: "claude-code"))
+
+        #expect(store.sessions[0].state == .running)
+        #expect(!store.sessions[0].needsAcknowledgement)
+
+        // Permission granted: the agent resumes straight into a tool call.
+        store.apply(AgentEvent(sessionID: "abc123", kind: .waitingForUser(message: "May I?"), agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .toolStarted(tool: "Bash"), agent: "claude-code"))
+
+        #expect(store.sessions[0].state == .running)
+        #expect(!store.sessions[0].needsAcknowledgement)
+    }
+
+    @Test("A finished turn awaits Acknowledgement; hovering the Island acknowledges every Session")
+    func hoverAcknowledgesAllSessions() {
+        let store = SessionStore()
+        store.apply(AgentEvent(sessionID: "done1", kind: .turnEnded, agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "wait1", kind: .waitingForUser(message: nil), agent: "claude-code"))
+
+        let allPending = store.sessions.allSatisfy { $0.needsAcknowledgement }
+        #expect(allPending)
+
+        store.acknowledgeAll()
+
+        let nonePending = store.sessions.allSatisfy { !$0.needsAcknowledgement }
+        #expect(nonePending)
+        // Acknowledgement clears the Liseré, never the Session state itself.
+        #expect(store.sessions.first(where: { $0.id == "done1" })?.state == .ended)
+        #expect(store.sessions.first(where: { $0.id == "wait1" })?.state == .waiting)
+    }
+
+    @Test("Acknowledging one Session leaves the others pending")
+    func acknowledgeSingleSession() {
+        let store = SessionStore()
+        store.apply(AgentEvent(sessionID: "done1", kind: .turnEnded, agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "wait1", kind: .waitingForUser(message: nil), agent: "claude-code"))
+
+        store.acknowledge(sessionID: "wait1")
+
+        #expect(store.sessions.first(where: { $0.id == "wait1" })?.needsAcknowledgement == false)
+        #expect(store.sessions.first(where: { $0.id == "done1" })?.needsAcknowledgement == true)
+    }
+
+    @Test("Focusing a terminal acknowledges the Sessions it hosts")
+    func terminalFocusAcknowledgesItsSessions() {
+        let store = SessionStore()
+        store.apply(AgentEvent(
+            sessionID: "ghosttySession", kind: .turnEnded,
+            terminal: "ghostty", agent: "claude-code"
+        ))
+        store.apply(AgentEvent(
+            sessionID: "otherTerminal", kind: .waitingForUser(message: nil),
+            terminal: "iterm", agent: "claude-code"
+        ))
+
+        store.acknowledge(terminal: "ghostty")
+
+        #expect(store.sessions.first(where: { $0.id == "ghosttySession" })?.needsAcknowledgement == false)
+        #expect(store.sessions.first(where: { $0.id == "otherTerminal" })?.needsAcknowledgement == true)
+        #expect(store.sessions.first(where: { $0.id == "ghosttySession" })?.terminal == "ghostty")
+    }
+
     @Test("Any event refreshes the inactivity TTL of its Session")
     func activityRefreshesTTL() {
         var currentDate = Date(timeIntervalSince1970: 1_000_000)
