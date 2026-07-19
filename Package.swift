@@ -31,7 +31,13 @@ let package = Package(
         // and acknowledges on terminal focus.
         .target(name: "IslandFocus", dependencies: ["IslandStore"]),
         // Floating Island UI (DynamicNotchKit): compact bar + peek on events.
-        .target(name: "IslandUI", dependencies: ["IslandStore", "DynamicNotchKit"]),
+        // Resources: embedded pixel-art sprite sheets (issue #11), generated
+        // by scripts/generate_sprites.py.
+        .target(
+            name: "IslandUI",
+            dependencies: ["IslandStore", "DynamicNotchKit"],
+            resources: [.process("Resources")]
+        ),
         // App executable wiring server + adapter + store + UI.
         .executableTarget(
             name: "Island",

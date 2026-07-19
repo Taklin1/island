@@ -4,7 +4,8 @@ import IslandStore
 import SwiftUI
 
 /// Drives the Island (ADR-0003): a compact floating bar by default — one
-/// glyph per live Session — and two expansions, only ever triggered by:
+/// pixel-art Sprite per live Session (issue #11) — and two expansions, only
+/// ever triggered by:
 /// - a 2-3 s Peek when a Session finishes its turn (then back to compact);
 /// - hovering the Island, which shows the Extended mode (one card per
 ///   Session: project, state, last prompt, running tool, elapsed time) and
@@ -120,10 +121,11 @@ public final class IslandController {
     }
 
     private func sessionsDidChange(_ sessions: [Session]) {
-        viewModel.compactStatus = Self.compactStatus(for: sessions)
+        viewModel.compactSprites = Self.compactSprites(for: sessions)
         viewModel.compactTone = Self.compactTone(for: sessions)
         viewModel.cards = sessions.map { self.card(for: $0) }
         log("sessions: \(Self.sessionsTrace(for: sessions))")
+        log("sprites: \(Self.spritesTrace(for: viewModel.compactSprites))")
 
         let newlyEnded = sessions.filter {
             $0.state == .ended && !knownEndedSessionIDs.contains($0.id)
@@ -298,13 +300,26 @@ public final class IslandController {
         return .neutral
     }
 
-    /// One glyph per Session — the compact bar mirrors the session list.
-    static func compactStatus(for sessions: [Session]) -> String {
-        guard !sessions.isEmpty else { return "–" }
-        return sessions
-            .map { SessionCard.presentation(of: $0.state).glyph }
-            .joined(separator: " ")
+    /// One Sprite per Session (issue #11) — the compact bar mirrors the
+    /// session list, each state encoded by the bot's animation.
+    static func compactSprites(for sessions: [Session]) -> [CompactSprite] {
+        sessions.map {
+            CompactSprite(id: $0.id, animation: SpriteAnimation.animation(for: $0.state))
+        }
     }
+
+    /// Stdout trace of the compact Sprites, so agentic tests can assert the
+    /// state → animation mapping without looking at pixels.
+    static func spritesTrace(for sprites: [CompactSprite]) -> String {
+        guard !sprites.isEmpty else { return "none" }
+        return sprites.map(\.animation.rawValue).joined(separator: " ")
+    }
+}
+
+/// One Sprite slot of the compact bar: which Session, which animation.
+struct CompactSprite: Identifiable, Equatable {
+    let id: String
+    let animation: SpriteAnimation
 }
 
 /// Observable UI state: what the compact bar and the expanded content show.
@@ -313,7 +328,8 @@ final class IslandViewModel: ObservableObject {
     @Published var peekText: String = ""
     /// Session announced by the current Peek: clicking the Peek activates it.
     @Published var peekSessionID: String?
-    @Published var compactStatus: String = "–"
+    /// One pixel-art Sprite per live Session (issue #11).
+    @Published var compactSprites: [CompactSprite] = []
     @Published var compactTone: IslandController.CompactTone = .neutral
     /// True while the Island is expanded by hover (Extended mode, cards);
     /// false when an expansion shows a Peek.
@@ -462,27 +478,38 @@ struct PeekView: View {
     }
 }
 
+/// The isle logo, pixel-art like the bots (validated with planche C).
 struct CompactLeadingView: View {
     var body: some View {
-        Text("🏝")
-            .font(.system(size: 12))
+        SpriteView(sheet: .isle, imageName: "isle", animation: .working)
     }
 }
 
+/// One animated Sprite per Session (issue #11). The sprites carry the state
+/// tints themselves (green check, orange question mark); the #8 Compact tone
+/// remains as a soft halo behind the row, same priority as the Liseré.
 struct CompactTrailingView: View {
     @ObservedObject var model: IslandViewModel
 
-    private var tint: Color {
+    private var glow: Color {
         switch model.compactTone {
-        case .neutral: .white
+        case .neutral: .clear
         case .waiting: .orange
         case .finished: .green
         }
     }
 
     var body: some View {
-        Text(model.compactStatus)
-            .font(.system(size: 11, weight: .medium, design: .monospaced))
-            .foregroundStyle(tint)
+        HStack(spacing: 3) {
+            if model.compactSprites.isEmpty {
+                Text("–")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white)
+            }
+            ForEach(model.compactSprites) { sprite in
+                SpriteView(sheet: .bot, imageName: "bot", animation: sprite.animation)
+            }
+        }
+        .shadow(color: glow, radius: 3)
     }
 }
