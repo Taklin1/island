@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.11
+
+- #39 Un tour finissant sur une question (« ? ») est classé « attend » (Liseré orange, glyphe « ? », question au Peek) au lieu de « terminé » : détection sur le texte final autoritaire `last_assistant_message` (robuste au lag du transcript de Claude Code au `Stop`). Un sous-agent `Agent` en arrière-plan (session distincte) n'altère pas ce classement — ses hooks portent un `agent_id` et sont écartés, le parent se résout sur son propre `Stop`. (ADR-0006 ; lag capitalisé en ADR-0002.)
+
 ## 0.1.10
 
 - #32 La carte Étendue affiche le titre de session Claude Code en haut (chemin du projet en dessous) ; le renommage manuel `/rename` (`custom-title`) prime sur le titre auto-généré (`ai-title`), reflété au prochain Événement et à l'ouverture Étendue (survol) ; repli sur le nom du dossier.
