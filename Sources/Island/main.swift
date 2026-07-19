@@ -13,6 +13,7 @@ import IslandUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SessionStore()
+    private let quotaStore = QuotaStore()
     private let settings = AppSettings()
     private var server: LocalServer?
     private var controller: IslandController?
@@ -20,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let store = store
+        let quotaStore = quotaStore
         installHooksOnFirstLaunch()
         installMenuBarIcon()
         Task { @MainActor in
@@ -32,13 +34,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         // The server already answered the hook; publishing is
                         // asynchronous and never blocks Claude Code.
                         Task { @MainActor in store.apply(event) }
+                    },
+                    // Quotas (issue #9): the statusline tee posts here.
+                    translateStatusline: QuotaUpdate.init(statuslineJSON:),
+                    publishQuota: { update in
+                        Task { @MainActor in quotaStore.apply(update) }
                     }
                 )
                 self.server = server
                 let port = try await server.start()
                 print("island: listening on http://127.0.0.1:\(port) (token: ~/.claude/island-token)")
 
-                let controller = IslandController(store: store)
+                let controller = IslandController(store: store, quotaStore: quotaStore)
                 self.controller = controller
                 await controller.activate()
             } catch {
@@ -97,6 +104,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installHooks()
     }
 
+    // MARK: - Statusline tee (issue #9, opt-in)
+
+    /// Opt-in: inserts the marked tee block into the user's statusline script
+    /// (timestamped backup, idempotent). Opt-out: removes the block and
+    /// restores the previous behavior. The preference only flips when the
+    /// script edit actually succeeded.
+    @objc private func toggleStatuslineTee(_ sender: NSMenuItem) {
+        let installer = StatuslineTeeInstaller(scriptURL: StatuslineTeeInstaller.defaultScriptURL)
+        do {
+            if settings.statuslineTeeEnabled {
+                switch try installer.uninstall() {
+                case .uninstalled(let backup):
+                    print("island: statusline tee removed"
+                        + (backup.map { " (backup: \($0.path))" } ?? ""))
+                case .nothingToUninstall:
+                    print("island: no statusline tee block found, nothing to remove")
+                }
+                settings.statuslineTeeEnabled = false
+            } else {
+                switch try installer.install() {
+                case .installed(let backup):
+                    print("island: statusline tee installed into "
+                        + StatuslineTeeInstaller.defaultScriptURL.path
+                        + (backup.map { " (backup: \($0.path))" } ?? ""))
+                case .alreadyInstalled:
+                    print("island: statusline tee already installed, nothing to do")
+                }
+                settings.statuslineTeeEnabled = true
+            }
+        } catch {
+            fputs("island: statusline tee toggle failed: \(error)\n", stderr)
+        }
+        sender.state = settings.statuslineTeeEnabled ? .on : .off
+        print("island: preference statuslineTeeEnabled=\(settings.statuslineTeeEnabled)")
+    }
+
     // MARK: - Menu bar
 
     private func installMenuBarIcon() {
@@ -129,6 +172,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sound.target = self
         sound.state = settings.soundEnabled ? .on : .off
         menu.addItem(sound)
+
+        let tee = NSMenuItem(
+            title: "Quotas via la statusline",
+            action: #selector(toggleStatuslineTee(_:)), keyEquivalent: "")
+        tee.target = self
+        tee.state = settings.statuslineTeeEnabled ? .on : .off
+        menu.addItem(tee)
 
         menu.addItem(.separator())
 

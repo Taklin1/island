@@ -11,6 +11,7 @@ struct AppSettings {
     static let borderEnabledKey = "borderEnabled"
     static let soundEnabledKey = "soundEnabled"
     static let hooksInstallAttemptedKey = "hooksInstallAttempted"
+    static let statuslineTeeEnabledKey = "statuslineTeeEnabled"
 
     private let defaults: UserDefaults
 
@@ -20,6 +21,10 @@ struct AppSettings {
             Self.borderEnabledKey: true,
             Self.soundEnabledKey: true,
             Self.hooksInstallAttemptedKey: false,
+            // Quotas via the statusline tee (issue #9): opt-in, OFF by
+            // default — the app never touches the user's statusline script
+            // without an explicit menu action.
+            Self.statuslineTeeEnabledKey: false,
         ])
     }
 
@@ -36,6 +41,11 @@ struct AppSettings {
     var hooksInstallAttempted: Bool {
         get { defaults.bool(forKey: Self.hooksInstallAttemptedKey) }
         nonmutating set { defaults.set(newValue, forKey: Self.hooksInstallAttemptedKey) }
+    }
+
+    var statuslineTeeEnabled: Bool {
+        get { defaults.bool(forKey: Self.statuslineTeeEnabledKey) }
+        nonmutating set { defaults.set(newValue, forKey: Self.statuslineTeeEnabledKey) }
     }
 }
 
