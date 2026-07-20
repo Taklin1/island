@@ -144,7 +144,16 @@ prompt-à-coller.
    est de même une décision humaine, hors du périmètre de /epic.)
 4. Après son merge : nettoyage complet (branches locales+remote des issues ET de l'epic,
    worktrees, `git worktree prune`, `git remote prune origin`), fermer l'epic si elle ne
-   l'est pas, puis **/capitalise** si la vague a appris quelque chose de nouveau.
+   l'est pas, **fermer le PRD source** (voir ci-dessous), puis **/capitalise** si la vague
+   a appris quelque chose de nouveau.
+
+   **Clôture du PRD source** : le chantier n'atterrit vraiment sur `develop` qu'ICI, donc
+   c'est ici — et pas avant — qu'on ferme le PRD qui l'a lancé. Aucun lien natif GitHub ne
+   rattache le PRD à l'epic ; on le retrouve par convention : l'issue **OUVERTE portant le
+   label `prd`** dont le body référence cette epic (`/to-prd` écrit « PRD de l'epic #<N> »
+   en tête). Sur ce PRD : commenter le lien de la PR d'intégration + la version livrée, puis
+   `gh issue close`. Si aucun PRD ouvert ne référence l'epic (feature promue sans PRD, ou
+   déjà fermé), ne rien inventer — le noter et passer.
 
 ---
 
