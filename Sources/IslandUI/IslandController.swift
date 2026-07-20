@@ -67,6 +67,15 @@ public final class IslandController {
     /// How close to the very top edge the cursor must be pinned to count as the
     /// deliberate "hard edge" gesture (a couple of points of hardware slack).
     private static let edgeTolerance: CGFloat = 2
+    /// Width of the keep-alive band around the reveal, used by the geometric
+    /// recede (issue #60). Wider than ``revealBandWidth`` (matches the panel's
+    /// `maxWidth`) so there is a horizontal hysteresis seam between "reveal" and
+    /// "recede": a cursor oscillating at the band edge triggers neither.
+    public static let recedeBandWidth: CGFloat = 340
+    /// How far below the top edge the cursor may sit and still keep the Étendu
+    /// alive (issue #60): covers the deployed panel's height so approaching or
+    /// loitering over it never arms a recede — only clearly dropping away does.
+    private static let recedeKeepAliveDepth: CGFloat = 220
     /// Store updates are coalesced to at most one UI refresh per interval.
     private let refreshInterval: DispatchQueue.SchedulerTimeType.Stride = .milliseconds(200)
 
@@ -239,6 +248,22 @@ public final class IslandController {
         expandToExtended(trigger: "révélation")
     }
 
+    /// Geometric recede fallback (issue #60): the global monitor reports the
+    /// cursor left the reveal band (``shouldRecede(at:in:)``) while the Étendu is
+    /// open and the pointer is *not* on the panel — the case the native hover-off
+    /// misses, because the panel deploys around the cursor at the edge and no
+    /// `mouseEntered` ever fired. Arms the same anti-flicker recede, once: a
+    /// pending grace is left running (re-entering the band or the panel is what
+    /// cancels it), so continuous motion away does not keep restarting it.
+    public func recedeIfClearOfPanel() {
+        guard mode == .expanded, notch?.isHovering != true, recedeTask == nil else { return }
+        scheduleRecede()
+    }
+
+    /// Test seam (issue #60): whether the Étendu is currently deployed, so the
+    /// recede tests can assert the fold without reaching into the private `mode`.
+    var isExtendedDeployed: Bool { mode == .expanded }
+
     /// Whether the top-edge gesture should Reveal the Island: cursor pinned to
     /// the top edge (Cocoa `maxY`) *and* inside the centred ~280 pt band near
     /// the webcam *and* at least one Session exists. Pure — the `NSEvent`
@@ -252,6 +277,23 @@ public final class IslandController {
         let atTopEdge = mouseLocation.y >= screenFrame.maxY - edgeTolerance
         let inCentreBand = abs(mouseLocation.x - screenFrame.midX) <= revealBandWidth / 2
         return atTopEdge && inCentreBand
+    }
+
+    /// Whether the cursor has clearly left the reveal — the geometric recede of
+    /// issue #60. True when the pointer either drops below the keep-alive depth
+    /// or moves out of the wider recede band. Pure, and deliberately loose (a
+    /// hysteresis seam sits between this and ``shouldReveal(at:in:sessionCount:)``)
+    /// so brief oscillation around the edge folds nothing. The `NSEvent` monitor
+    /// asks this only while the Étendu is open and the panel is not being hovered
+    /// (the native hover is the authority on "the cursor is on the panel").
+    public static func shouldRecede(
+        at mouseLocation: CGPoint,
+        in screenFrame: CGRect
+    ) -> Bool {
+        let depthBelowEdge = screenFrame.maxY - mouseLocation.y
+        let droppedBelowKeepAlive = depthBelowEdge > recedeKeepAliveDepth
+        let outsideRecedeBand = abs(mouseLocation.x - screenFrame.midX) > recedeBandWidth / 2
+        return droppedBelowKeepAlive || outsideRecedeBand
     }
 
     /// Native DynamicNotchKit hover, live only while a panel exists (`state !=
