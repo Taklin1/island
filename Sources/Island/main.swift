@@ -50,6 +50,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let store = store
         let quotaStore = quotaStore
         let titleRefresher = titleRefresher
+        // Réponse depuis l'Island (issue #28): bound as locals (like `store`
+        // above) so the injectAnswer closure never captures `self` — these are
+        // value-type structs, so the copy is cheap and shares the same
+        // UserDefaults.
+        let settings = settings
+        let accessibility = accessibility
+        let onboarding = onboarding
         installHooksOnFirstLaunch()
         installMenuBarIcon()
         // Réponse depuis l'Island (issue #28): trace the Accessibility
@@ -96,13 +103,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             }
                         }
                     },
-                    // Answer-by-injection (issue #27): safe-targeted keystroke
-                    // into the Session's Ghostty window when it is the certain
-                    // target, else degrade to Click-to-focus. Real AX/CGEvent
-                    // lives in `TerminalResponder.live` (proven only by the HITL
-                    // FP on the packaged app — spike #25).
+                    // Answer-by-injection (issue #27) gated by the preference +
+                    // Accessibility permission (issue #28, US8/US9). The pure
+                    // `AnswerFromIslandGate` decides: only when the feature is on
+                    // *and* the permission is granted do we attempt the
+                    // safe-targeted keystroke (`TerminalResponder.live`, whose own
+                    // unicity guard still degrades an uncertain target to focus).
+                    // Otherwise we inject nothing (return false → the controller
+                    // degrades to Click-to-focus) and, on the first no-permission
+                    // use, guide to System Settings once — non-blocking, never
+                    // forced (ADR-0009). Real AX/CGEvent is proven only by the HITL
+                    // FP on the packaged app (spike #25).
                     injectAnswer: { cwd, optionIndex in
-                        TerminalResponder.live.inject(optionIndex: optionIndex, forSessionCWD: cwd)
+                        switch AnswerFromIslandGate.action(
+                            featureEnabled: settings.answerFromIslandEnabled,
+                            permissionGranted: accessibility.isGranted,
+                            onboardingAlreadyPrompted: settings.answerFromIslandOnboardingPrompted
+                        ) {
+                        case .inject:
+                            return TerminalResponder.live.inject(
+                                optionIndex: optionIndex, forSessionCWD: cwd)
+                        case .displayAndFocus(let guideToSettings):
+                            if guideToSettings {
+                                print("island: accessibility permission absent → guiding to"
+                                    + " System Settings (answer degrades to display + focus;"
+                                    + " relaunch island.app after granting)")
+                                onboarding.guideToSystemSettings()
+                                settings.answerFromIslandOnboardingPrompted = true
+                            }
+                            return false
+                        }
                     }
                 )
                 self.controller = controller
