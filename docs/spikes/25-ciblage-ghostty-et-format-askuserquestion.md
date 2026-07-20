@@ -205,13 +205,14 @@ identifiée, ou explicitement à revoir en #29 ».
 
 ## Décisions (validées par Loïc, 2026-07-19)
 
-1. **Ciblage par `AXDocument` + gate d'unicité** : **validé, figé** dans l'ADR-0006.
+1. **Ciblage par `AXDocument` + gate d'unicité** : **validé, figé** dans l'ADR-0009.
 2. **Injection prouvée seulement sur `island.app`** (jamais l'instance vivante) : **acté** (garde-fou capitalisé
    dans `docs/agents/agentic-driving.md`).
-3. **Format (b)** validé, figé dans l'ADR-0006.
-4. **Collision de numéro d'ADR : résolue** — l'ADR d'injection a été renuméroté en
-   `0006-reponse-par-injection-ciblee.md` sur `epic/22` (PRD #23 réaligné, plus aucune réf « 0005 ») ; `0005`
-   reste l'ADR de packaging sur `develop`. La décision du spike est figée par **mise à jour de l'ADR-0006**.
+3. **Format (b)** validé, figé dans l'ADR-0009.
+4. **Collision de numéro d'ADR : résolue** — en réconciliant `epic/22` avec `develop`, ce dernier a apporté
+   `0006-question-finale`, `0007-island-flottante-masquee` et `0008-gate-sous-agents` ; l'ADR d'injection a donc
+   été renuméroté en `0009-reponse-par-injection-ciblee.md`. `0005` reste l'ADR de packaging sur `develop`.
+   La décision du spike est figée par **mise à jour de l'ADR-0009**.
 
 _Reste à trancher en #26 (hors périmètre spike)_ : sur une invocation à **N questions**, comportement
 d'affichage (1ʳᵉ question / empiler / dégrader) ; et la **frappe physique** exacte du sélecteur TUI

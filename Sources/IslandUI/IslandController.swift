@@ -1,29 +1,39 @@
+import AppKit
 import Combine
 import DynamicNotchKit
 import IslandStore
 import SwiftUI
 
-/// Drives the Island (ADR-0003): a compact floating bar by default — one
-/// pixel-art Sprite per live Session (issue #11) — and two expansions, only
-/// ever triggered by:
-/// - a 2-3 s Peek when a Session finishes its turn (then back to compact);
-/// - hovering the Island, which shows the Extended mode (one card per
-///   Session: project, state, last prompt, running tool, elapsed time) and
-///   folds back to compact as soon as the pointer leaves.
+/// Drives the Island (ADR-0007): a `.floating` panel that is **Masqué** (nothing
+/// on screen) by default — even while Sessions work — and only ever surfaces by:
+/// - a ~2.5 s **Peek** when a Session waits or finishes its turn, then back to
+///   Masqué (the persistence of attention is carried by the Liseré, not the Peek);
+/// - a deliberate **Reveal** — the global mouse monitor detects the top-edge
+///   gesture via the pure ``shouldReveal(at:in:sessionCount:)`` and deploys the
+///   **Étendu** (one card per Session), which the native `.keepVisible` hover
+///   keeps open and which recedes to Masqué when the pointer leaves.
 ///
-/// The Island never expands on its own outside those two paths. The panel is
-/// non-activating (DynamicNotchKit uses a `.nonactivatingPanel`), so it never
-/// steals focus from the terminal.
+/// The Island never expands on its own outside those two paths, and neither the
+/// Reveal nor the hover acknowledges anything (looking ≠ treating): Acknowledgement
+/// happens one Session at a time via click-to-focus (#10) or terminal refocus.
+/// The panel is non-activating (DynamicNotchKit uses a `.nonactivatingPanel`), so
+/// it never steals focus from the terminal.
 ///
 /// Depends only on the generic session store (ADR-0004). Store updates are
 /// throttled before touching the view model: PreToolUse/PostToolUse arrive at
 /// high rate and must not trigger one render each.
 @MainActor
 public final class IslandController {
+    /// The Island's visibility machine (ADR-0007, issue #53). The floating
+    /// panel is hidden by default; it only surfaces for a transient Peek or a
+    /// deliberate Reveal, then recedes back to Masqué.
     private enum Mode {
-        case compact
+        /// Masqué: nothing on screen, even while Sessions work.
+        case hidden
+        /// Peek: transient surface on a marking event, then back to Masqué.
         case peek
-        case expandedHover
+        /// Étendu: the revealed cards, kept open by hover, folds on pointer exit.
+        case expanded
     }
 
     private let store: SessionStore
@@ -31,48 +41,80 @@ public final class IslandController {
     /// Click-to-focus (issue #10): brings the Session's terminal frontmost.
     /// Injected so the UI never depends on a concrete terminal module.
     private let focusTerminal: ((String?) -> Void)?
+    /// Re-reads Session titles on Extended open (issue #32). Injected so the UI
+    /// never learns where titles come from (a `/rename` on an idle/ended Session
+    /// fires no hook; hovering must still show the new title). ADR-0004: the
+    /// transcript lives behind the adapter, the controller only triggers.
+    private let refreshTitles: (() -> Void)?
     private let viewModel = IslandViewModel()
-    private var notch: DynamicNotch<ExpandedContentView, CompactLeadingView, CompactTrailingView>?
+    private var notch: DynamicNotch<ExpandedContentView, EmptyView, EmptyView>?
     private var cancellables: Set<AnyCancellable> = []
     private var knownEndedSessionIDs: Set<String> = []
     private var knownWaitingSessionIDs: Set<String> = []
     private var peekTask: Task<Void, Never>?
-    private var mode: Mode = .compact
+    /// Anti-flicker grace before the revealed Island recedes to Masqué.
+    private var recedeTask: Task<Void, Never>?
+    private var mode: Mode = .hidden
 
-    /// How long a Peek stays on screen before folding back to compact.
+    /// How long a Peek stays on screen before folding back to Masqué.
     private let peekDuration: Duration = .seconds(2.5)
+    /// Grace delay before a hover-off recedes the Étendu to Masqué: bridges the
+    /// brief gap between the top-edge gesture and the pointer landing on the
+    /// panel, so the Island does not flicker shut mid-reveal.
+    private let recedeGrace: Duration = .milliseconds(300)
+    /// Width of the centred top-edge band that triggers a Reveal (~webcam),
+    /// used by the pure ``shouldReveal(at:in:sessionCount:)`` (issue #53).
+    public static let revealBandWidth: CGFloat = 280
+    /// How close to the very top edge the cursor must be pinned to count as the
+    /// deliberate "hard edge" gesture (a couple of points of hardware slack).
+    private static let edgeTolerance: CGFloat = 2
+    /// Width of the keep-alive band around the reveal, used by the geometric
+    /// recede (issue #60). Wider than ``revealBandWidth`` (matches the panel's
+    /// `maxWidth`) so there is a horizontal hysteresis seam between "reveal" and
+    /// "recede": a cursor oscillating at the band edge triggers neither.
+    public static let recedeBandWidth: CGFloat = 340
+    /// How far below the top edge the cursor may sit and still keep the Étendu
+    /// alive (issue #60): covers the deployed panel's height so approaching or
+    /// loitering over it never arms a recede — only clearly dropping away does.
+    private static let recedeKeepAliveDepth: CGFloat = 220
     /// Store updates are coalesced to at most one UI refresh per interval.
     private let refreshInterval: DispatchQueue.SchedulerTimeType.Stride = .milliseconds(200)
 
     public init(
         store: SessionStore,
         quotaStore: QuotaStore = QuotaStore(),
-        focusTerminal: ((String?) -> Void)? = nil
+        focusTerminal: ((String?) -> Void)? = nil,
+        refreshTitles: (() -> Void)? = nil
     ) {
         self.store = store
         self.quotaStore = quotaStore
         self.focusTerminal = focusTerminal
+        self.refreshTitles = refreshTitles
         viewModel.activateSession = { [weak self] sessionID in
             self?.cardActivated(sessionID: sessionID)
         }
     }
 
-    /// Shows the compact Island and starts reacting to session changes.
+    /// Starts reacting to session changes. The Island stays Masqué (nothing on
+    /// screen) until a Peek or a Reveal surfaces it (ADR-0007, issue #53).
     public func activate() async {
         let viewModel = viewModel
-        // `.notch` (not `.auto`/`.floating`): in DynamicNotchKit, the floating
-        // style *hides* the panel in compact state, so a notchless Mac would
-        // have no visible compact Island at all. The notch style falls back to
-        // a 300 pt top-center bar on notchless screens — the micro-bar we want.
+        // `.floating` (ADR-0007): the Island is masqué by default on a notchless
+        // Mac. In DynamicNotchKit the floating style *hides* the panel on
+        // `compact()`, so there is no always-visible micro-bar and the compact
+        // views would never render — the panel only exists during a Peek or a
+        // Reveal. The compact-less initializer disables both compact slots
+        // (issue #55). Its `.keepVisible` hover keeps the Étendu open while the
+        // pointer is on it.
         let notch = DynamicNotch(
             hoverBehavior: [.keepVisible],
-            style: .notch,
-            expanded: { ExpandedContentView(model: viewModel) },
-            compactLeading: { CompactLeadingView() },
-            compactTrailing: { CompactTrailingView(model: viewModel) }
+            style: .floating,
+            expanded: { ExpandedContentView(model: viewModel) }
         )
         self.notch = notch
-        await notch.compact()
+        // No initial surface: Masqué is the resting state.
+        mode = .hidden
+        log("masqué (au repos)")
 
         store.$sessions
             .throttle(for: refreshInterval, scheduler: DispatchQueue.main, latest: true)
@@ -121,11 +163,8 @@ public final class IslandController {
     }
 
     private func sessionsDidChange(_ sessions: [Session]) {
-        viewModel.compactSprites = Self.compactSprites(for: sessions)
-        viewModel.compactTone = Self.compactTone(for: sessions)
-        viewModel.cards = sessions.map { self.card(for: $0) }
+        setCards(from: sessions)
         log("sessions: \(Self.sessionsTrace(for: sessions))")
-        log("sprites: \(Self.spritesTrace(for: viewModel.compactSprites))")
 
         let newlyEnded = sessions.filter {
             $0.state == .ended && !knownEndedSessionIDs.contains($0.id)
@@ -137,11 +176,45 @@ public final class IslandController {
         }
         knownWaitingSessionIDs = Set(sessions.filter { $0.state == .waiting }.map(\.id))
 
-        // A blocked agent matters more than a finished one: same priority as
-        // the Liseré.
-        if let session = newlyWaiting.last ?? newlyEnded.last {
+        // A blocked agent matters more than a finished one: the Peek picks the
+        // most pressing newly-marking Session by the shared Priorité d'état.
+        if let session = Self.mostPressingForPeek(newlyWaiting + newlyEnded) {
             peek(for: session)
         }
+    }
+
+    /// Orders the Extended cards by **Priorité d'état** (issue #44): the shared
+    /// ``SessionState/priorityRank`` first (waiting > terminé > working > idle),
+    /// then a per-group recency tie-break on `lastActivityAt` — `waiting` oldest
+    /// first (anti-oubli: what has waited longest is the most urgent), every
+    /// other group freshest first (the latest result on top, the rest below the
+    /// fold). A final `id` tie-break makes the order fully deterministic, so a
+    /// refresh never reshuffles equal cards (no jitter); the reordering itself
+    /// is animated by card `id` in the view.
+    static func sortedByStatePriority(_ sessions: [Session]) -> [Session] {
+        sessions.sorted { lhs, rhs in
+            let lhsRank = lhs.state.priorityRank
+            let rhsRank = rhs.state.priorityRank
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            if lhs.lastActivityAt != rhs.lastActivityAt {
+                // waiting: oldest first (ascending); every other group: freshest
+                // first (descending).
+                return lhs.state == .waiting
+                    ? lhs.lastActivityAt < rhs.lastActivityAt
+                    : lhs.lastActivityAt > rhs.lastActivityAt
+            }
+            return lhs.id < rhs.id
+        }
+    }
+
+    /// The Session a Peek announces among the newly-marking ones: the most
+    /// pressing state present (shared Priorité d'état — waiting outranks terminé)
+    /// and, within that group, the latest to have arrived. `nil` when nothing is
+    /// newly marking. Sources the waiting > terminé order from the shared rank
+    /// instead of hardcoding it.
+    static func mostPressingForPeek(_ sessions: [Session]) -> Session? {
+        guard let topRank = sessions.map(\.state.priorityRank).min() else { return nil }
+        return sessions.last { $0.state.priorityRank == topRank }
     }
 
     // MARK: - Click-to-focus (issue #10)
@@ -165,9 +238,23 @@ public final class IslandController {
         )
     }
 
-    /// Rebuilds the cards without re-tracing the sessions (context refresh).
+    /// Rebuilds the cards without re-tracing the sessions (context refresh),
+    /// keeping the same Priorité d'état order as the main refresh so a context
+    /// update never reshuffles the panel.
     private func refreshCards() {
-        viewModel.cards = store.sessions.map { self.card(for: $0) }
+        setCards(from: store.sessions)
+    }
+
+    /// Publishes the cards in Priorité d'état order (issue #44), animating the
+    /// reordering so a Session changing rank slides into place instead of
+    /// snapping. The order is deterministic (see ``sortedByStatePriority(_:)``),
+    /// so equal cards never reshuffle and the animation only fires on a real
+    /// rank/recency change.
+    private func setCards(from sessions: [Session]) {
+        let cards = Self.sortedByStatePriority(sessions).map { self.card(for: $0) }
+        withAnimation(.default) {
+            viewModel.cards = cards
+        }
     }
 
     private func quotasDidChange(_ quotas: Quotas?) {
@@ -198,50 +285,144 @@ public final class IslandController {
             .joined(separator: " ")
     }
 
-    // MARK: - Extended mode (hover only)
+    // MARK: - Reveal / Extended mode (issue #53)
 
+    /// Deliberate Reveal from the global mouse monitor: the cursor was pinned to
+    /// the top-centre edge (``shouldReveal(at:in:sessionCount:)`` already vetted
+    /// the geometry and the ≥1-Session rule), so deploy the Étendu. Works at any
+    /// time — rest or waiting — and over a full-screen app (the panel is
+    /// `.screenSaver` + `.canJoinAllSpaces`). Never acknowledges: looking ≠
+    /// treating (ADR-0007).
+    public func reveal() {
+        expandToExtended(trigger: "révélation")
+    }
+
+    /// Geometric recede fallback (issue #60): the global monitor reports the
+    /// cursor left the reveal band (``shouldRecede(at:in:)``) while the Étendu is
+    /// open and the pointer is *not* on the panel — the case the native hover-off
+    /// misses, because the panel deploys around the cursor at the edge and no
+    /// `mouseEntered` ever fired. Arms the same anti-flicker recede, once: a
+    /// pending grace is left running (re-entering the band or the panel is what
+    /// cancels it), so continuous motion away does not keep restarting it.
+    public func recedeIfClearOfPanel() {
+        guard mode == .expanded, notch?.isHovering != true, recedeTask == nil else { return }
+        scheduleRecede()
+    }
+
+    /// Test seam (issue #60): whether the Étendu is currently deployed, so the
+    /// recede tests can assert the fold without reaching into the private `mode`.
+    var isExtendedDeployed: Bool { mode == .expanded }
+
+    /// Whether the top-edge gesture should Reveal the Island: cursor pinned to
+    /// the top edge (Cocoa `maxY`) *and* inside the centred ~280 pt band near
+    /// the webcam *and* at least one Session exists. Pure — the `NSEvent`
+    /// monitor is a thin shell delegating every decision here (issue #53).
+    public static func shouldReveal(
+        at mouseLocation: CGPoint,
+        in screenFrame: CGRect,
+        sessionCount: Int
+    ) -> Bool {
+        guard sessionCount >= 1 else { return false }
+        let atTopEdge = mouseLocation.y >= screenFrame.maxY - edgeTolerance
+        let inCentreBand = abs(mouseLocation.x - screenFrame.midX) <= revealBandWidth / 2
+        return atTopEdge && inCentreBand
+    }
+
+    /// Whether the cursor has clearly left the reveal — the geometric recede of
+    /// issue #60. True when the pointer either drops below the keep-alive depth
+    /// or moves out of the wider recede band. Pure, and deliberately loose (a
+    /// hysteresis seam sits between this and ``shouldReveal(at:in:sessionCount:)``)
+    /// so brief oscillation around the edge folds nothing. The `NSEvent` monitor
+    /// asks this only while the Étendu is open and the panel is not being hovered
+    /// (the native hover is the authority on "the cursor is on the panel").
+    public static func shouldRecede(
+        at mouseLocation: CGPoint,
+        in screenFrame: CGRect
+    ) -> Bool {
+        let depthBelowEdge = screenFrame.maxY - mouseLocation.y
+        let droppedBelowKeepAlive = depthBelowEdge > recedeKeepAliveDepth
+        let outsideRecedeBand = abs(mouseLocation.x - screenFrame.midX) > recedeBandWidth / 2
+        return droppedBelowKeepAlive || outsideRecedeBand
+    }
+
+    /// Native DynamicNotchKit hover, live only while a panel exists (`state !=
+    /// .hidden`). Hovering a Peek promotes it to the Étendu; hovering the
+    /// revealed panel keeps it open; leaving it recedes to Masqué after a grace
+    /// delay. Never acknowledges (ADR-0007).
     func hoverDidChange(_ hovering: Bool) {
         if hovering {
-            peekTask?.cancel()
-            mode = .expandedHover
-            viewModel.showCards = true
-            // Hovering the Island is an Acknowledgement (issue #8): the user
-            // has seen the pending states, the Liseré goes out.
-            store.acknowledgeAll()
-            log("expanded on hover: \(viewModel.cards.count) session card(s), acknowledged all")
-            Task { [weak self] in
-                await self?.notch?.expand()
-            }
-        } else if mode == .expandedHover {
-            mode = .compact
-            viewModel.showCards = false
-            log("hover ended, folded back to compact")
-            Task { [weak self] in
-                await self?.notch?.compact()
-            }
+            expandToExtended(trigger: "révélation (survol)")
+        } else if mode == .expanded {
+            scheduleRecede()
+        }
+    }
+
+    /// Deploys the Étendu (cards), idempotent: a second trigger while already
+    /// expanded just cancels a pending recede. Re-reads titles on open (#32) so
+    /// a `/rename` on an idle/ended Session — which fired no hook — shows now.
+    private func expandToExtended(trigger: String) {
+        peekTask?.cancel()
+        recedeTask?.cancel()
+        recedeTask = nil
+        guard mode != .expanded else { return }
+        mode = .expanded
+        refreshTitles?()
+        viewModel.showCards = true
+        log("\(trigger): \(viewModel.cards.count) session card(s) [\(Self.cardsTrace(for: viewModel.cards))]")
+        Task { [weak self] in
+            await self?.notch?.expand()
+        }
+    }
+
+    /// Compact stdout trace of the deployed cards **in Priorité d'état order**
+    /// (issue #44), so an agentic test can assert the ordering state-first when
+    /// the Étendu deploys — the card order has no other observable signal (the
+    /// SwiftUI order is not otherwise reachable, and the sessions trace follows
+    /// store insertion, not the sort).
+    static func cardsTrace(for cards: [SessionCard]) -> String {
+        cards.map { "\($0.project)[\($0.id)]=\($0.stateLabel)" }.joined(separator: " > ")
+    }
+
+    /// Recede the revealed Island to Masqué after a short anti-flicker grace, so
+    /// a pointer briefly leaving and re-entering the panel does not blink it shut.
+    private func scheduleRecede() {
+        recedeTask?.cancel()
+        recedeTask = Task { [weak self, recedeGrace] in
+            try? await Task.sleep(for: recedeGrace)
+            guard let self, !Task.isCancelled, self.mode == .expanded,
+                self.notch?.isHovering != true
+            else { return }
+            self.mode = .hidden
+            self.viewModel.showCards = false
+            self.log("masqué (curseur quitte le panneau)")
+            await self.notch?.hide()
         }
     }
 
     // MARK: - Peek
 
-    /// Expands the Island for a short while, then folds back to compact.
-    /// Never fights the Extended mode: while hovered, no Peek.
+    /// Surfaces the Island in a transient Peek, then recedes to Masqué. Never
+    /// fights the Étendu: while revealed, no Peek (ADR-0007, issue #53).
     private func peek(for session: Session) {
-        guard mode != .expandedHover else { return }
+        guard mode != .expanded else { return }
         viewModel.peekText = Self.peekText(for: session)
+        viewModel.peekAnimation = Self.peekAnimation(for: session)
         viewModel.peekSessionID = session.id
+        // A Peek shows the peek text, not the cards, whatever the last Reveal left.
+        viewModel.showCards = false
 
         peekTask?.cancel()
+        recedeTask?.cancel()
         mode = .peek
         peekTask = Task { [weak self, peekDuration] in
             guard let self, let notch = self.notch else { return }
-            log("peek shown: \(self.viewModel.peekText)")
+            log("peek: \(self.viewModel.peekText)")
             await notch.expand()
             try? await Task.sleep(for: peekDuration)
             guard !Task.isCancelled, self.mode == .peek else { return }
-            self.mode = .compact
-            await notch.compact()
-            log("peek folded back to compact")
+            self.mode = .hidden
+            await notch.hide()
+            log("masqué (peek terminé)")
         }
     }
 
@@ -263,6 +444,14 @@ public final class IslandController {
                 if let tool = session.currentTool {
                     parts += "(\(tool))"
                 }
+                // Live Sous-agents (#48), read from the Stop's background_tasks:
+                // a Session with one is never terminée. Surfaced on stdout so the
+                // agentic FP can assert the count was parsed (state=running +
+                // ×Nsub proves the gate engaged), the production trace of the
+                // decoded count — distinct from any capture instrumentation.
+                if session.activeSubagentCount > 0 {
+                    parts += " ×\(session.activeSubagentCount)sub"
+                }
                 if session.lastSummary != nil {
                     parts += "+summary"
                 }
@@ -277,66 +466,39 @@ public final class IslandController {
             .joined(separator: " ")
     }
 
-    /// Tint of the compact bar: mirrors the most pressing Session state.
-    enum CompactTone: Equatable {
-        case neutral
-        /// A Session waits on the user (orange, wins over everything).
-        case waiting
-        /// A Session finished its turn (green).
-        case finished
-    }
-
     /// What the Peek announces for a marking event on a Session: the waiting
     /// call to action, or the first line of the turn summary (ADR-0002, falls
     /// back to the bare "terminé" when the transcript had nothing usable).
     static func peekText(for session: Session) -> String {
         session.state == .waiting
-            ? "\(session.projectName) ? attend une réponse"
+            ? SessionCard.waitingPeekLine(
+                project: session.projectName,
+                questionText: session.lastSummary?.text
+            )
             : SessionCard.peekLine(
                 project: session.projectName,
                 summaryText: session.lastSummary?.text
             )
     }
 
-    /// Orange when a Session waits, green when one finished, neutral
-    /// otherwise — same priority as the Liseré.
-    static func compactTone(for sessions: [Session]) -> CompactTone {
-        if sessions.contains(where: { $0.state == .waiting }) { return .waiting }
-        if sessions.contains(where: { $0.state == .ended }) { return .finished }
-        return .neutral
-    }
-
-    /// One Sprite per Session (issue #11) — the compact bar mirrors the
-    /// session list, each state encoded by the bot's animation.
-    static func compactSprites(for sessions: [Session]) -> [CompactSprite] {
-        sessions.map {
-            CompactSprite(id: $0.id, animation: SpriteAnimation.animation(for: $0.state))
-        }
-    }
-
-    /// Stdout trace of the compact Sprites, so agentic tests can assert the
-    /// state → animation mapping without looking at pixels.
-    static func spritesTrace(for sprites: [CompactSprite]) -> String {
-        guard !sprites.isEmpty else { return "none" }
-        return sprites.map(\.animation.rawValue).joined(separator: " ")
+    /// The Sprite the Peek shows for a marking event (issue #55): the Session's
+    /// mascot, its animation encoding the state through the same mapping the
+    /// Extended cards use, so the transient Peek and the cards speak the same
+    /// visual language.
+    static func peekAnimation(for session: Session) -> SpriteAnimation {
+        SpriteAnimation.animation(for: session.state)
     }
 }
 
-/// One Sprite slot of the compact bar: which Session, which animation.
-struct CompactSprite: Identifiable, Equatable {
-    let id: String
-    let animation: SpriteAnimation
-}
-
-/// Observable UI state: what the compact bar and the expanded content show.
+/// Observable UI state: what the Peek and the expanded content show.
 @MainActor
 final class IslandViewModel: ObservableObject {
     @Published var peekText: String = ""
+    /// Animation of the Peek's Sprite (issue #55): the mascot of the Session the
+    /// Peek announces, its animation encoding the state.
+    @Published var peekAnimation: SpriteAnimation = .working
     /// Session announced by the current Peek: clicking the Peek activates it.
     @Published var peekSessionID: String?
-    /// One pixel-art Sprite per live Session (issue #11).
-    @Published var compactSprites: [CompactSprite] = []
-    @Published var compactTone: IslandController.CompactTone = .neutral
     /// True while the Island is expanded by hover (Extended mode, cards);
     /// false when an expansion shows a Peek.
     @Published var showCards: Bool = false
@@ -365,30 +527,79 @@ struct ExpandedContentView: View {
 struct SessionCardsView: View {
     @ObservedObject var model: IslandViewModel
 
+    /// Fraction of the screen height the Extended list may fill before it starts
+    /// to scroll (#43). Kept well under the vendored half-screen window borne
+    /// (`DynamicNotch` sizes its panel to `screen.frame.height / 2`), so this
+    /// content cap — not the window — is what bounds a crowded list.
+    static let maxHeightFraction: CGFloat = 0.25
+
+    /// The panel height for a given content and screen: hug the content below
+    /// the cap (no empty space with 1–2 Sessions), clamp to ~1/4 of the screen
+    /// above it so the overflow scrolls. Pure, so the arithmetic is pinned by a
+    /// unit test while the scrolling itself is verified visually.
+    static func cappedHeight(contentHeight: CGFloat, screenHeight: CGFloat) -> CGFloat {
+        min(contentHeight, screenHeight * maxHeightFraction)
+    }
+
+    /// Measured intrinsic height of the card list, fed by a background
+    /// `GeometryReader`. Zero until the first layout pass — the panel then stays
+    /// intrinsic so the vendored `.fixedSize()` wrap never collapses it to
+    /// nothing before the first measurement lands.
+    @State private var contentHeight: CGFloat = 0
+
+    /// ~1/4 of the current screen height, mirroring the vendored borne's use of
+    /// `frame` (not `visibleFrame`) on the first screen. Falls back to a sane
+    /// value when no screen is reported.
+    private var screenHeight: CGFloat {
+        NSScreen.screens.first?.frame.height ?? 900
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if model.cards.isEmpty {
-                Text("aucune session")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(model.cards) { card in
-                SessionCardView(card: card) {
-                    model.activateSession?(card.id)
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 8) {
+                if model.cards.isEmpty {
+                    Text("aucune session")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    model.activateSession?(card.id)
+                ForEach(model.cards) { card in
+                    // Click-to-focus (issue #10): tapping the card *or* one of
+                    // its AskUserQuestion option buttons (issue #26) degrades to
+                    // focus — nothing is injected here (injection is #27).
+                    SessionCardView(card: card) {
+                        model.activateSession?(card.id)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        model.activateSession?(card.id)
+                    }
+                }
+                // Quotas (issue #9): global gauges at the foot of the panel,
+                // only when the statusline reported rate limits. In v1 they
+                // scroll with the list (#43).
+                if !model.quotaGauges.isEmpty {
+                    QuotaGaugesView(gauges: model.quotaGauges)
                 }
             }
-            // Quotas (issue #9): global gauges at the foot of the panel,
-            // only when the statusline reported rate limits.
-            if !model.quotaGauges.isEmpty {
-                QuotaGaugesView(gauges: model.quotaGauges)
-            }
+            .padding(12)
+            .frame(maxWidth: 340)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { contentHeight = proxy.size.height }
+                        .onChange(of: proxy.size.height) { _, newValue in
+                            contentHeight = newValue
+                        }
+                }
+            )
         }
-        .padding(12)
-        .frame(maxWidth: 340)
+        // Hug the content until it would exceed ~1/4 of the screen, then cap and
+        // let the overflow scroll (#43). Standard macOS overlay scrollers — no
+        // permanent indicator. Only the height is constrained: the width keeps
+        // hugging its content up to 340 pt, unchanged.
+        .frame(height: contentHeight == 0
+            ? nil
+            : Self.cappedHeight(contentHeight: contentHeight, screenHeight: screenHeight))
     }
 }
 
@@ -404,9 +615,13 @@ struct SessionCardView: View {
                 // Pixel-art state glyph (issue #11): the bot screen's glyph
                 // alone, same palette and pace as the compact Sprites.
                 SpriteView(sheet: .glyphs, imageName: "glyphs", animation: card.animation)
-                Text(card.project)
+                // Session title on top (issue #32), reflecting /rename; the
+                // project path sits underneath. A long title truncates cleanly
+                // on the tail so the state label stays visible.
+                Text(card.title)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer(minLength: 8)
                 Text(card.stateLabel)
                     .font(.system(size: 11))
@@ -438,6 +653,14 @@ struct SessionCardView: View {
                 Text("outil : \(tool)")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.orange)
+                    .lineLimit(1)
+            }
+            // Discreet Sous-agent tally (issue #48, Q6): "⋯ N sous-agents en
+            // cours" — shown only while at least one runs.
+            if let subagents = card.subagentsLabel {
+                Text("⋯ \(subagents)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             if let summary = card.summaryText {
@@ -508,57 +731,28 @@ struct SessionCardView: View {
     }
 }
 
+/// The transient Peek (issue #55): the Session's Sprite — its animation encodes
+/// the state (green check when finished, blinking question when waiting) — next
+/// to the announcement text, the same visual language as the Extended cards.
+/// Stays clickable (click-to-focus, #10) over the whole surface.
 struct PeekView: View {
     @ObservedObject var model: IslandViewModel
 
     var body: some View {
-        Text(model.peekText)
-            .font(.headline)
-            .foregroundStyle(.white)
-            .lineLimit(1)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if let sessionID = model.peekSessionID {
-                    model.activateSession?(sessionID)
-                }
-            }
-    }
-}
-
-/// The isle logo, pixel-art like the bots (validated with planche C).
-struct CompactLeadingView: View {
-    var body: some View {
-        SpriteView(sheet: .isle, imageName: "isle", animation: .working)
-    }
-}
-
-/// One animated Sprite per Session (issue #11). The sprites carry the state
-/// tints themselves (green check, orange question mark); the #8 Compact tone
-/// remains as a soft halo behind the row, same priority as the Liseré.
-struct CompactTrailingView: View {
-    @ObservedObject var model: IslandViewModel
-
-    private var glow: Color {
-        switch model.compactTone {
-        case .neutral: .clear
-        case .waiting: .orange
-        case .finished: .green
+        HStack(spacing: 8) {
+            SpriteView(sheet: .bot, imageName: "bot", animation: model.peekAnimation)
+            Text(model.peekText)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .lineLimit(1)
         }
-    }
-
-    var body: some View {
-        HStack(spacing: 3) {
-            if model.compactSprites.isEmpty {
-                Text("–")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white)
-            }
-            ForEach(model.compactSprites) { sprite in
-                SpriteView(sheet: .bot, imageName: "bot", animation: sprite.animation)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if let sessionID = model.peekSessionID {
+                model.activateSession?(sessionID)
             }
         }
-        .shadow(color: glow, radius: 3)
     }
 }

@@ -5,6 +5,10 @@ import IslandStore
 /// Pure data + formatting: the SwiftUI layer only lays it out.
 struct SessionCard: Identifiable, Equatable {
     let id: String
+    /// Header line of the card (issue #32): the session title (Claude Code's
+    /// `ai-title`, reflecting `/rename`), falling back to the project folder
+    /// name when no title is known yet. Shown on top; the path goes underneath.
+    let title: String
     /// Project name (last component of the cwd).
     let project: String
     /// Abbreviated cwd ("~/Documents/island"), or nil when unknown.
@@ -29,6 +33,9 @@ struct SessionCard: Identifiable, Equatable {
     /// One compact line of turn facts — "todos 1/3 · 2 fichiers · 3:20" —
     /// keeping only what the extraction actually found.
     let summaryFacts: String?
+    /// Sous-agents still running under this Session (issue #48, Q6). Drives the
+    /// discreet tally on the card; zero when none run.
+    let activeSubagentCount: Int
     /// The AskUserQuestion the Session is blocked on (issue #26): its label and
     /// ordered options become the question text + one button per option. Only
     /// set while the Session is `.waiting` on an extractable question; `nil`
@@ -41,9 +48,18 @@ struct SessionCard: Identifiable, Equatable {
         contextUsedPercentage.map { "contexte \(Int($0.rounded())) %" }
     }
 
+    /// Discreet French tally of live Sous-agents (issue #48, Q6), or nil when
+    /// none run — "1 sous-agent en cours" / "3 sous-agents en cours".
+    var subagentsLabel: String? {
+        guard activeSubagentCount > 0 else { return nil }
+        let noun = activeSubagentCount == 1 ? "sous-agent" : "sous-agents"
+        return "\(activeSubagentCount) \(noun) en cours"
+    }
+
     init(session: Session, contextUsedPercentage: Double? = nil, home: String = NSHomeDirectory()) {
         id = session.id
         project = session.projectName
+        title = session.title ?? session.projectName
         if let cwd = session.cwd, !cwd.isEmpty {
             location = cwd.hasPrefix(home) ? "~" + cwd.dropFirst(home.count) : cwd
         } else {
@@ -57,6 +73,7 @@ struct SessionCard: Identifiable, Equatable {
         turnStartedAt = session.turnStartedAt
         summaryText = session.lastSummary?.text
         summaryFacts = session.lastSummary.flatMap(Self.factsLine(for:))
+        activeSubagentCount = session.activeSubagentCount
         // Buttons only ever show while waiting on a question; a stale one on a
         // resumed Session never leaks to the card.
         question = session.state == .waiting ? session.pendingQuestion : nil
@@ -90,6 +107,35 @@ struct SessionCard: Identifiable, Equatable {
             .flatMap(firstMeaningfulLine(of:))
             .map { truncate($0, at: maxLength) }
         return "\(project) ✓ \(headline ?? "terminé")"
+    }
+
+    /// The one-line Peek for a Session waiting on the user. When the wait comes
+    /// from a turn that ended on a question (#39, ADR-0006), show the question
+    /// itself — « projet · attend : "…?" » — so the answer is one glance away;
+    /// otherwise (a permission/AskUserQuestion wait, which carries no summary)
+    /// keep the historical call to action « projet ? attend une réponse ».
+    static func waitingPeekLine(project: String, questionText: String?, maxLength: Int = 80) -> String {
+        guard let question = questionText.flatMap(lastQuestionLine(of:)) else {
+            return "\(project) ? attend une réponse"
+        }
+        return "\(project) · attend : \"\(truncate(question, at: maxLength))\""
+    }
+
+    /// The final question line of an assistant message, when the message ends
+    /// on one (#39): the message is right-trimmed and kept only if it ends with
+    /// `?` (same rule the adapter used to classify the turn), then its last
+    /// non-empty line is returned so the Peek shows the question, not the lead-in.
+    private static func lastQuestionLine(of text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasSuffix("?") else { return nil }
+        for line in trimmed.split(separator: "\n").reversed() {
+            let stripped = line
+                .trimmingCharacters(in: .whitespaces)
+                .drop(while: { "#->*• ".contains($0) })
+                .trimmingCharacters(in: .whitespaces)
+            if !stripped.isEmpty { return stripped }
+        }
+        return nil
     }
 
     /// First non-empty line, shedding markdown heading/list markers so the

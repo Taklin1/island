@@ -355,7 +355,10 @@ private extension DynamicNotch {
         menubarHeight = screen.menubarHeight
 
         let style = effectiveStyle(for: screen)
-        let view = NSHostingView(rootView: NotchContentView(dynamicNotch: self, style: style))
+        // island patch (issue #33): FirstMouseHostingView (not NSHostingView)
+        // so the first click on the non-activating panel reaches the SwiftUI
+        // content instead of being swallowed by macOS window ordering.
+        let view = FirstMouseHostingView(rootView: NotchContentView(dynamicNotch: self, style: style))
 
         let panel = DynamicNotchPanel(
             contentRect: .zero,
