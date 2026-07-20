@@ -151,6 +151,31 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
   island`). Tester le login item = lancer le `.app` empaqueté, jamais le binaire
   nu. Voir ADR-0005.
 
+## Vérif HITL sur l'app packagée : relancer le binaire du bundle, pas le Finder
+
+- **Découverte** : `island.app` lancée via le Finder (ou `open`) n'a AUCUNE trace
+  lisible — l'app trace par `print` sur stdout (pas os_log), donc
+  `log show --predicate 'process == "island"'` revient vide et le stdout part
+  dans le vide. Impossible de croiser les observations HITL (clics, états)
+  avec les traces.
+- **Bonne méthode** : relancer le **binaire du bundle** avec redirection — même
+  exécutable, donc l'octroi Accessibilité (par binaire) et le contexte bundle
+  sont préservés :
+  ```bash
+  pkill -f "Applications/island.app" && sleep 1
+  nohup ~/Applications/island.app/Contents/MacOS/island > /tmp/island-hitl.log 2>&1 &
+  tail -f /tmp/island-hitl.log
+  ```
+  À la fin de la campagne, quitter par la mascotte menu-bar et relancer
+  normalement (Finder ou login item au prochain redémarrage).
+- **Preuve** (vérif HITL 0.1.23, 2026-07-20) : lancée Finder → `log show` vide,
+  aucun observable ; relancée binaire+redirection → `accessibility permission
+  granted`, `card activated: <id> → focus terminal ghostty`, `waiting+msg`…
+  toutes les traces qui ont tranché #77 et confirmé le périmètre de #36.
+- **Pourquoi** : justesse — sans traces, une vérif HITL ne départage pas « le
+  clic n'atteint pas le handler » de « l'action aval échoue en silence » ; la
+  seule trace `card activated` scinde cet arbre en deux dès le premier clic.
+
 ## Comportement des hooks : capturer le fil réel avant de coder une détection
 
 - **Découverte** : une fixture synthétique encode facilement une *croyance*
