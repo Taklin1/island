@@ -41,6 +41,15 @@ public final class IslandController {
     /// Click-to-focus (issue #10): brings the Session's terminal frontmost.
     /// Injected so the UI never depends on a concrete terminal module.
     private let focusTerminal: ((String?) -> Void)?
+    /// Answer-by-injection (issue #27): given a Session's cwd and the chosen
+    /// AskUserQuestion option index, targets that Session's Ghostty window and
+    /// injects the keystroke **only** if the target is certain, returning
+    /// whether it did. `false` means it injected nothing (uncertain target, no
+    /// Accessibility permission) and the controller degrades to Click-to-focus.
+    /// Injected as a plain closure so the UI never imports the Focus/AX module,
+    /// and so the real injection — proven only on the packaged app (spike #25) —
+    /// stays entirely outside the controller.
+    private let injectAnswer: ((_ cwd: String?, _ optionIndex: Int) -> Bool)?
     /// Re-reads Session titles on Extended open (issue #32). Injected so the UI
     /// never learns where titles come from (a `/rename` on an idle/ended Session
     /// fires no hook; hovering must still show the new title). ADR-0004: the
@@ -84,14 +93,19 @@ public final class IslandController {
         store: SessionStore,
         quotaStore: QuotaStore = QuotaStore(),
         focusTerminal: ((String?) -> Void)? = nil,
-        refreshTitles: (() -> Void)? = nil
+        refreshTitles: (() -> Void)? = nil,
+        injectAnswer: ((_ cwd: String?, _ optionIndex: Int) -> Bool)? = nil
     ) {
         self.store = store
         self.quotaStore = quotaStore
         self.focusTerminal = focusTerminal
         self.refreshTitles = refreshTitles
+        self.injectAnswer = injectAnswer
         viewModel.activateSession = { [weak self] sessionID in
             self?.cardActivated(sessionID: sessionID)
+        }
+        viewModel.answerOption = { [weak self] sessionID, optionIndex in
+            self?.optionSelected(sessionID: sessionID, optionIndex: optionIndex)
         }
     }
 
@@ -227,6 +241,28 @@ public final class IslandController {
         store.acknowledge(sessionID: sessionID)
         log("card activated: \(sessionID) → focus terminal \(session?.terminal ?? "default")")
         focusTerminal?(session?.terminal)
+    }
+
+    // MARK: - Answer from the Island (issue #27)
+
+    /// An AskUserQuestion option button was tapped: attempt a **safe-targeted**
+    /// injection of that option's keystroke into the Session's terminal, and on
+    /// any doubt degrade to Click-to-focus — never a keystroke in the wrong
+    /// terminal (ADR-0009). Injection is attempted only while the Session is
+    /// genuinely `.waiting` (a real event may have moved it between render and
+    /// tap). On success the Session resumes `.running` optimistically (US11);
+    /// otherwise the tap behaves exactly like a card tap (acknowledge + focus).
+    func optionSelected(sessionID: String, optionIndex: Int) {
+        let session = store.sessions.first { $0.id == sessionID }
+        let injected = session?.state == .waiting
+            && (injectAnswer?(session?.cwd, optionIndex) ?? false)
+        if injected {
+            log("answer: option \(optionIndex + 1) injected → \(sessionID) « en cours »")
+            store.resumeAfterAnswer(sessionID: sessionID)
+        } else {
+            log("answer: option \(optionIndex + 1) → cible incertaine, dégrade en focus")
+            cardActivated(sessionID: sessionID)
+        }
     }
 
     // MARK: - Quotas (issue #9)
@@ -508,6 +544,9 @@ final class IslandViewModel: ObservableObject {
     @Published var quotaGauges: [QuotaGauge] = []
     /// Click-to-focus: set by the controller, called by card/Peek taps.
     var activateSession: ((String) -> Void)?
+    /// Answer-by-injection (issue #27): set by the controller, called with a
+    /// Session id and the tapped option index when an option button is pressed.
+    var answerOption: ((String, Int) -> Void)?
 }
 
 /// Expanded content: Session cards in Extended mode (hover), Peek text
@@ -563,12 +602,15 @@ struct SessionCardsView: View {
                         .foregroundStyle(.secondary)
                 }
                 ForEach(model.cards) { card in
-                    // Click-to-focus (issue #10): tapping the card *or* one of
-                    // its AskUserQuestion option buttons (issue #26) degrades to
-                    // focus — nothing is injected here (injection is #27).
-                    SessionCardView(card: card) {
-                        model.activateSession?(card.id)
-                    }
+                    // Click-to-focus (issue #10): tapping the card degrades to
+                    // focus. Tapping an AskUserQuestion option button (issue #27)
+                    // instead attempts a safe-targeted keystroke injection,
+                    // degrading to focus only when the target is uncertain.
+                    SessionCardView(
+                        card: card,
+                        onActivate: { model.activateSession?(card.id) },
+                        onAnswer: { index in model.answerOption?(card.id, index) }
+                    )
                     .contentShape(Rectangle())
                     .onTapGesture {
                         model.activateSession?(card.id)
@@ -605,9 +647,12 @@ struct SessionCardsView: View {
 
 struct SessionCardView: View {
     let card: SessionCard
-    /// Click-to-focus (issue #10): tapping the card *or* an option button
-    /// degrades to focus — #26 injects nothing (injection is #27).
+    /// Click-to-focus (issue #10): tapping the card degrades to focus.
     let onActivate: () -> Void
+    /// Answer-by-injection (issue #27): tapping option N attempts a safe-targeted
+    /// injection of that option, degrading to focus only when the target is
+    /// uncertain — the controller decides, the view only reports the tap.
+    let onAnswer: (Int) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -693,9 +738,9 @@ struct SessionCardView: View {
                     .foregroundStyle(.secondary)
             }
             // AskUserQuestion (issue #26): the question label + one button per
-            // option, in transcript order (the number is the 1/2/3 key mapping
-            // prepared for #27). A tap only degrades to Click-to-focus — nothing
-            // is injected here, and showing buttons never clears the Liseré.
+            // option, in transcript order (the number is the 1/2/3 key mapping).
+            // Tapping a button attempts a safe-targeted injection of that option
+            // (issue #27); merely showing the buttons never clears the Liseré.
             if let question = card.question {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(question.prompt)
@@ -724,7 +769,7 @@ struct SessionCardView: View {
                                 .fill(.white.opacity(0.12))
                         )
                         .contentShape(Rectangle())
-                        .onTapGesture { onActivate() }
+                        .onTapGesture { onAnswer(index) }
                     }
                 }
                 .padding(.top, 2)

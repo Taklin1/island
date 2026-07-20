@@ -277,6 +277,33 @@ public final class SessionStore: ObservableObject {
         acknowledge { $0.terminal == terminal }
     }
 
+    // MARK: - Answer from the Island (issue #27, US11)
+
+    /// Optimistic feedback after the user answered a waiting Session from the
+    /// Island by injection (issue #27): the Session flips back to `.running`
+    /// immediately, its now-answered ``Session/pendingQuestion`` is cleared, and
+    /// its Liseré goes out — through the **existing** per-Session Acknowledgement
+    /// (`needsAcknowledgement`, the very field click-to-focus clears): answering
+    /// *is* acting on the Session (ADR-0007). The elapsed clock restarts on the
+    /// resumed turn.
+    ///
+    /// This never invents a terminal state: the real confirmation still arrives
+    /// through the hooks (a fresh `promptSubmitted`/`toolStarted` overwrites this
+    /// optimistic `.running`), so the state is never doubled. A no-op unless the
+    /// Session is genuinely `.waiting`, so a stale or late tap can never
+    /// resurrect an ended or already-running Session (US7).
+    public func resumeAfterAnswer(sessionID: String) {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
+            sessions[index].state == .waiting
+        else { return }
+        let timestamp = now()
+        sessions[index].state = .running
+        sessions[index].pendingQuestion = nil
+        sessions[index].needsAcknowledgement = false
+        sessions[index].turnStartedAt = timestamp
+        sessions[index].lastActivityAt = timestamp
+    }
+
     /// Clears the flag without ever touching the Session state itself: a
     /// waiting Session stays waiting, only the Liseré goes out.
     private func acknowledge(where matches: (Session) -> Bool) {
