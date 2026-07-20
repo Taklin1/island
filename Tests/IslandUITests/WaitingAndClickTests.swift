@@ -39,7 +39,7 @@ struct WaitingAndClickTests {
             terminal: "ghostty", agent: "claude-code"
         ))
         store.apply(AgentEvent(
-            sessionID: "done", kind: .turnEnded,
+            sessionID: "done", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0),
             terminal: "ghostty", agent: "claude-code"
         ))
         var focused: [String?] = []
@@ -75,5 +75,15 @@ struct WaitingAndClickTests {
 
         #expect(IslandController.peekText(for: waiting) == "demo ? attend une réponse")
         #expect(IslandController.peekText(for: ended) == "demo ✓ terminé")
+    }
+
+    @Test("The Peek of a question-wait announces the question (#39)")
+    func peekTextOfQuestionWaitShowsTheQuestion() {
+        let questionWait = Session(
+            id: "q", state: .waiting, cwd: "/tmp/demo", agent: "claude-code",
+            lastSummary: TurnSummary(text: "Should I target Postgres or SQLite?"))
+
+        #expect(IslandController.peekText(for: questionWait)
+            == "demo · attend : \"Should I target Postgres or SQLite?\"")
     }
 }

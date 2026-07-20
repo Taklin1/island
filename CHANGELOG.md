@@ -3,6 +3,26 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.12
+
+- #48 Une Session reste « en cours » tant qu'un Sous-agent `Agent` (background, même `session_id`, distingué par `agent_id`) tourne : le compte des Sous-agents vivants est lu directement dans le tableau `background_tasks` du hook `Stop` (entrées `type == "subagent"`, `id` non vide) — décision au Stop, sans course ni flash vert et sans tic d'horloge (chaque complétion de Sous-agent réinjecte un tour ⇒ nouveau `Stop` qui ré-évalue). La question l'emporte toujours (`?` ⇒ orange immédiat, même Sous-agent actif). Compte discret « ⋯ N sous-agents en cours » sur la carte Étendue. Supprime le compteur mort et la complétion différée de #31. (ADR-0008 amendé : gate `background_tasks` au lieu du timeout ; capture ciblée du fil réel.)
+
+## 0.1.11
+
+- #39 Un tour finissant sur une question (« ? ») est classé « attend » (Liseré orange, glyphe « ? », question au Peek) au lieu de « terminé » : détection sur le texte final autoritaire `last_assistant_message` (robuste au lag du transcript de Claude Code au `Stop`). Un sous-agent `Agent` en arrière-plan (session distincte) n'altère pas ce classement — ses hooks portent un `agent_id` et sont écartés, le parent se résout sur son propre `Stop`. (ADR-0006 ; lag capitalisé en ADR-0002.)
+
+## 0.1.10
+
+- #32 La carte Étendue affiche le titre de session Claude Code en haut (chemin du projet en dessous) ; le renommage manuel `/rename` (`custom-title`) prime sur le titre auto-généré (`ai-title`), reflété au prochain Événement et à l'ouverture Étendue (survol) ; repli sur le nom du dossier.
+
+## 0.1.9
+
+- #31 Fiabilise l'état des Sessions en temps réel : une notification d'inactivité ne crée plus de faux « attend » ni ne ressuscite un tour terminé (whitelist de blocage + repli sur le texte) ; le suivi des sous-agents (`SubagentStart`/`Stop`, compteur sur la Session parente) empêche d'afficher « terminée » tant qu'un sous-agent tourne, la fin de tour n'étant actée qu'au dernier sous-agent arrêté — même si son `Stop` arrive après le `Stop` principal.
+
+## 0.1.8
+
+- #33 Réparé le click-to-focus : le premier clic sur une carte (ou le Peek) ramène Ghostty au premier plan du premier coup, même quand l'Island n'est pas l'app active — via `acceptsFirstMouse` sur le contenu du panneau vendoré non-activant, sans jamais rendre l'Island activante (ciblage de la fenêtre/onglet exact = v1.5, suivi en #36).
+
 ## 0.1.7
 
 - #11 Sprites pixel-art animés par Session (planche « Bots » + logo île + glyphes d'état des cartes Étendues, sheets embarquées, moteur SpriteView, mapping états → animations, teintes #8 portées par le Sprite).

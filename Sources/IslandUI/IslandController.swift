@@ -31,6 +31,11 @@ public final class IslandController {
     /// Click-to-focus (issue #10): brings the Session's terminal frontmost.
     /// Injected so the UI never depends on a concrete terminal module.
     private let focusTerminal: ((String?) -> Void)?
+    /// Re-reads Session titles on Extended open (issue #32). Injected so the UI
+    /// never learns where titles come from (a `/rename` on an idle/ended Session
+    /// fires no hook; hovering must still show the new title). ADR-0004: the
+    /// transcript lives behind the adapter, the controller only triggers.
+    private let refreshTitles: (() -> Void)?
     private let viewModel = IslandViewModel()
     private var notch: DynamicNotch<ExpandedContentView, CompactLeadingView, CompactTrailingView>?
     private var cancellables: Set<AnyCancellable> = []
@@ -47,11 +52,13 @@ public final class IslandController {
     public init(
         store: SessionStore,
         quotaStore: QuotaStore = QuotaStore(),
-        focusTerminal: ((String?) -> Void)? = nil
+        focusTerminal: ((String?) -> Void)? = nil,
+        refreshTitles: (() -> Void)? = nil
     ) {
         self.store = store
         self.quotaStore = quotaStore
         self.focusTerminal = focusTerminal
+        self.refreshTitles = refreshTitles
         viewModel.activateSession = { [weak self] sessionID in
             self?.cardActivated(sessionID: sessionID)
         }
@@ -204,6 +211,9 @@ public final class IslandController {
         if hovering {
             peekTask?.cancel()
             mode = .expandedHover
+            // Extended open (issue #32): re-read titles so a /rename done while
+            // the Session was idle/ended — which fired no hook — shows up now.
+            refreshTitles?()
             viewModel.showCards = true
             // Hovering the Island is an Acknowledgement (issue #8): the user
             // has seen the pending states, the Liseré goes out.
@@ -263,6 +273,14 @@ public final class IslandController {
                 if let tool = session.currentTool {
                     parts += "(\(tool))"
                 }
+                // Live Sous-agents (#48), read from the Stop's background_tasks:
+                // a Session with one is never terminée. Surfaced on stdout so the
+                // agentic FP can assert the count was parsed (state=running +
+                // ×Nsub proves the gate engaged), the production trace of the
+                // decoded count — distinct from any capture instrumentation.
+                if session.activeSubagentCount > 0 {
+                    parts += " ×\(session.activeSubagentCount)sub"
+                }
                 if session.lastSummary != nil {
                     parts += "+summary"
                 }
@@ -285,7 +303,10 @@ public final class IslandController {
     /// back to the bare "terminé" when the transcript had nothing usable).
     static func peekText(for session: Session) -> String {
         session.state == .waiting
-            ? "\(session.projectName) ? attend une réponse"
+            ? SessionCard.waitingPeekLine(
+                project: session.projectName,
+                questionText: session.lastSummary?.text
+            )
             : SessionCard.peekLine(
                 project: session.projectName,
                 summaryText: session.lastSummary?.text
@@ -393,9 +414,13 @@ struct SessionCardView: View {
                 // Pixel-art state glyph (issue #11): the bot screen's glyph
                 // alone, same palette and pace as the compact Sprites.
                 SpriteView(sheet: .glyphs, imageName: "glyphs", animation: card.animation)
-                Text(card.project)
+                // Session title on top (issue #32), reflecting /rename; the
+                // project path sits underneath. A long title truncates cleanly
+                // on the tail so the state label stays visible.
+                Text(card.title)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer(minLength: 8)
                 Text(card.stateLabel)
                     .font(.system(size: 11))
@@ -427,6 +452,14 @@ struct SessionCardView: View {
                 Text("outil : \(tool)")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.orange)
+                    .lineLimit(1)
+            }
+            // Discreet Sous-agent tally (issue #48, Q6): "⋯ N sous-agents en
+            // cours" — shown only while at least one runs.
+            if let subagents = card.subagentsLabel {
+                Text("⋯ \(subagents)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             if let summary = card.summaryText {
