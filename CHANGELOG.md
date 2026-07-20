@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.13
+
+- #54 Icône animée dans la barre des menus : l'`NSStatusItem` porte une mascotte pixel-art unique animée sur timer, reflétant l'état agrégé le plus pressant sur toutes les Sessions (waiting > terminé > working > idle, via la fonction pure `SpriteAnimation.menuBarMascot(for:)` qui ne compte que les waiting/ended non acquittées) ; une seule mascotte, jamais de badge ; à vide ou tout acquitté elle dort. Réglage « Afficher l'Icône animée » persisté (ON par défaut) : quand off, repli sur une icône statique neutre, le menu (préférences / réinstaller-hooks / quitter) restant toujours accessible. (Épopée #41, ADR-0007.)
+
 ## 0.1.12
 
 - #48 Une Session reste « en cours » tant qu'un Sous-agent `Agent` (background, même `session_id`, distingué par `agent_id`) tourne : le compte des Sous-agents vivants est lu directement dans le tableau `background_tasks` du hook `Stop` (entrées `type == "subagent"`, `id` non vide) — décision au Stop, sans course ni flash vert et sans tic d'horloge (chaque complétion de Sous-agent réinjecte un tour ⇒ nouveau `Stop` qui ré-évalue). La question l'emporte toujours (`?` ⇒ orange immédiat, même Sous-agent actif). Compte discret « ⋯ N sous-agents en cours » sur la carte Étendue. Supprime le compteur mort et la complétion différée de #31. (ADR-0008 amendé : gate `background_tasks` au lieu du timeout ; capture ciblée du fil réel.)
