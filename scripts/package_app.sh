@@ -9,8 +9,13 @@
 # in docs/agents/agentic-driving.md).
 #
 # Repeatable — run any time after a build:
-#     scripts/package_app.sh            # build, bundle, sign, install
+#     scripts/package_app.sh            # build, bundle, sign, install (X.Y.Z-dev)
 #     scripts/package_app.sh --no-install   # build, bundle, sign only
+#     scripts/package_app.sh --release  # bare X.Y.Z version (CI use, ADR-0010)
+#
+# Version: read from the top of CHANGELOG.md, suffixed `-dev` by default so a
+# local build is distinguishable from a release and never self-updates (US15);
+# `--release` keeps the bare version (future CI packaging, release.yml).
 #
 # Requires: Command Line Tools (swift, codesign, iconutil already used to make
 # the icon). No full Xcode needed.
@@ -27,9 +32,11 @@ APP_DIR="${DIST_DIR}/${APP_NAME}.app"
 RESOURCE_BUNDLE="Island_IslandUI.bundle"
 
 INSTALL=1
+RELEASE=0
 for arg in "$@"; do
     case "$arg" in
         --no-install) INSTALL=0 ;;
+        --release) RELEASE=1 ;;
         *) echo "unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
@@ -40,6 +47,12 @@ VERSION="$(grep -m1 -Eo '^## [0-9]+\.[0-9]+\.[0-9]+' "${REPO_ROOT}/CHANGELOG.md"
 if [[ -z "${VERSION}" ]]; then
     echo "error: could not read version from CHANGELOG.md" >&2
     exit 1
+fi
+# Local builds are marked `-dev` (never self-update, US15/ADR-0010); only an
+# explicit --release (CI) keeps the bare version. Suffix AFTER the extraction
+# so the CHANGELOG grep format stays untouched.
+if [[ "${RELEASE}" -eq 0 ]]; then
+    VERSION="${VERSION}-dev"
 fi
 echo "==> island ${VERSION} (bundle id: ${BUNDLE_ID})"
 
