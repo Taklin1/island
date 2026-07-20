@@ -26,6 +26,11 @@ public struct Session: Identifiable, Equatable, Sendable {
     /// True while a marking event (waiting / turn ended) has not been
     /// Acknowledged by the user. Drives the Liseré.
     public var needsAcknowledgement: Bool
+    /// The AskUserQuestion this Session is blocked on (issue #26), extracted
+    /// locally from the transcript. Set only while `.waiting` on an extractable
+    /// question; cleared on any transition away from waiting so an answered
+    /// question is never re-shown. `nil` = no buttons (Click-to-focus, US10).
+    public var pendingQuestion: PendingQuestion?
 
     /// Human-readable project name: last path component of the cwd.
     public var projectName: String {
@@ -44,7 +49,8 @@ public struct Session: Identifiable, Equatable, Sendable {
         turnStartedAt: Date? = nil,
         lastSummary: TurnSummary? = nil,
         lastActivityAt: Date = Date(),
-        needsAcknowledgement: Bool = false
+        needsAcknowledgement: Bool = false,
+        pendingQuestion: PendingQuestion? = nil
     ) {
         self.id = id
         self.state = state
@@ -57,6 +63,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         self.lastSummary = lastSummary
         self.lastActivityAt = lastActivityAt
         self.needsAcknowledgement = needsAcknowledgement
+        self.pendingQuestion = pendingQuestion
     }
 }
 
@@ -147,10 +154,12 @@ public final class SessionStore: ObservableObject {
             session.turnStartedAt = timestamp
             session.needsAcknowledgement = false
             session.lastSummary = nil
+            session.pendingQuestion = nil
         case let .toolStarted(tool):
             session.state = .running
             session.currentTool = tool
             session.needsAcknowledgement = false
+            session.pendingQuestion = nil
             if session.turnStartedAt == nil {
                 session.turnStartedAt = timestamp
             }
@@ -162,9 +171,13 @@ public final class SessionStore: ObservableObject {
             session.turnStartedAt = nil
             session.needsAcknowledgement = true
             session.lastSummary = event.summary
+            session.pendingQuestion = nil
         case .waitingForUser:
             session.state = .waiting
             session.needsAcknowledgement = true
+            // The extracted AskUserQuestion (or nil for a permission/free-text
+            // block) rides the event; showing buttons never clears the Liseré.
+            session.pendingQuestion = event.question
         }
 
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {

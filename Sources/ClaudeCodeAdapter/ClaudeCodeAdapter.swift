@@ -31,6 +31,7 @@ public enum ClaudeCodeAdapter {
 
         let kind: AgentEventKind
         var summary: TurnSummary?
+        var question: PendingQuestion?
         switch payload.hookEventName {
         case "SessionStart":
             kind = .sessionStarted
@@ -60,6 +61,13 @@ public enum ClaudeCodeAdapter {
             // ones (auth_success…) are ignored.
             guard isWaitingNotification(payload.notificationType) else { return nil }
             kind = .waitingForUser(message: payload.message)
+            // ADR-0002 / spike #25: extract the pending AskUserQuestion locally
+            // from the transcript. Best-effort — a permission/free-text block
+            // yields no question and the card degrades to Click-to-focus (US10).
+            if let path = payload.transcriptPath {
+                question = TranscriptReader.pendingQuestion(
+                    ofTranscriptAt: URL(fileURLWithPath: path))
+            }
         default:
             // SubagentStart/SubagentStop (and any future unhandled hook) are
             // deliberately ignored.
@@ -72,7 +80,8 @@ public enum ClaudeCodeAdapter {
             cwd: payload.cwd,
             terminal: defaultTerminal,
             agent: agentName,
-            summary: summary
+            summary: summary,
+            question: question
         )
     }
 

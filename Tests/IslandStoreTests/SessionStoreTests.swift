@@ -124,6 +124,65 @@ struct SessionStoreTests {
         #expect(store.sessions[0].needsAcknowledgement)
     }
 
+    @Test("A waiting event carries the extracted question onto the Session, still to acknowledge")
+    func waitingCarriesPendingQuestion() {
+        let store = SessionStore()
+        let question = PendingQuestion(
+            prompt: "Which sprite direction?",
+            options: [.init(label: "Bots"), .init(label: "Blobs")])
+        store.apply(AgentEvent(
+            sessionID: "abc123",
+            kind: .waitingForUser(message: nil),
+            agent: "claude-code",
+            question: question
+        ))
+
+        #expect(store.sessions[0].state == .waiting)
+        #expect(store.sessions[0].pendingQuestion == question)
+        // Carrying the question (buttons) must not pre-acknowledge the Liseré.
+        #expect(store.sessions[0].needsAcknowledgement)
+    }
+
+    @Test("A waiting event with no question (permission) leaves the Session buttonless")
+    func waitingWithoutQuestionHasNoButtons() {
+        let store = SessionStore()
+        store.apply(AgentEvent(
+            sessionID: "abc123",
+            kind: .waitingForUser(message: "Claude needs your permission to use Bash"),
+            agent: "claude-code"
+        ))
+
+        #expect(store.sessions[0].state == .waiting)
+        #expect(store.sessions[0].pendingQuestion == nil)
+    }
+
+    @Test("Answering clears the pending question so an old one is never re-shown")
+    func answeringClearsPendingQuestion() {
+        let store = SessionStore()
+        let question = PendingQuestion(prompt: "Q?", options: [.init(label: "A")])
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .waitingForUser(message: nil),
+            agent: "claude-code", question: question))
+        #expect(store.sessions[0].pendingQuestion != nil)
+
+        // A new prompt, a resumed tool, or a finished turn all leave waiting:
+        // the stale question must not linger on the card.
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "next"), agent: "claude-code"))
+        #expect(store.sessions[0].pendingQuestion == nil)
+
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .waitingForUser(message: nil),
+            agent: "claude-code", question: question))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .toolStarted(tool: "Bash"), agent: "claude-code"))
+        #expect(store.sessions[0].pendingQuestion == nil)
+
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .waitingForUser(message: nil),
+            agent: "claude-code", question: question))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded, agent: "claude-code"))
+        #expect(store.sessions[0].pendingQuestion == nil)
+    }
+
     @Test("Answering (prompt or tool resuming) leaves waiting and clears the Acknowledgement flag")
     func answeringClearsWaitingAndAcknowledgement() {
         let store = SessionStore()

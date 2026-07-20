@@ -18,6 +18,39 @@ struct WaitingAndClickTests {
         #expect(card.animation == .question)
     }
 
+    @Test("A waiting card carries the question label and its options in order")
+    func waitingCardCarriesQuestion() {
+        let question = PendingQuestion(
+            prompt: "Which sprite direction?",
+            options: [.init(label: "Bots"), .init(label: "Blobs"), .init(label: "None")])
+        let card = SessionCard(
+            session: Session(
+                id: "x", state: .waiting, agent: "claude-code", pendingQuestion: question),
+            home: "/Users/loic")
+
+        #expect(card.question?.prompt == "Which sprite direction?")
+        // Order preserved: the index is the 1/2/3 key mapping shown on buttons.
+        #expect(card.question?.options.map(\.label) == ["Bots", "Blobs", "None"])
+    }
+
+    @Test("Only a waiting card shows question buttons; a lingering one never leaks")
+    func onlyWaitingCardShowsQuestion() {
+        // Buttons make sense only while waiting; a stale question on a resumed
+        // Session must not render.
+        let question = PendingQuestion(prompt: "Q?", options: [.init(label: "A")])
+        let running = SessionCard(
+            session: Session(
+                id: "x", state: .running, agent: "claude-code", pendingQuestion: question),
+            home: "/Users/loic")
+        #expect(running.question == nil)
+
+        // A waiting Session with no extractable question shows no buttons (US10).
+        let permission = SessionCard(
+            session: Session(id: "y", state: .waiting, agent: "claude-code"),
+            home: "/Users/loic")
+        #expect(permission.question == nil)
+    }
+
     @Test("The compact bar tone mirrors the Sessions: orange when one waits, over green")
     func compactToneReflectsSessions() {
         let waiting = Session(id: "w", state: .waiting, agent: "claude-code")
@@ -29,6 +62,22 @@ struct WaitingAndClickTests {
         // Orange (waiting) always wins over green (finished).
         #expect(IslandController.compactTone(for: [ended, waiting]) == .waiting)
         #expect(IslandController.compactTone(for: []) == .neutral)
+    }
+
+    @Test("The sessions trace surfaces a waiting Session's pending question and option count")
+    func sessionsTraceShowsPendingQuestion() {
+        let question = PendingQuestion(
+            prompt: "Q?", options: [.init(label: "A"), .init(label: "B"), .init(label: "C")])
+        let withButtons = Session(
+            id: "w", state: .waiting, cwd: "/tmp/demo", agent: "claude-code",
+            pendingQuestion: question)
+        let permission = Session(id: "p", state: .waiting, cwd: "/tmp/demo", agent: "claude-code")
+
+        let trace = IslandController.sessionsTrace(for: [withButtons, permission])
+        // State first: the FP asserts extraction from stdout; pixels stay visual.
+        #expect(trace.contains("demo[w]=waiting+question(3)"))
+        #expect(trace.contains("demo[p]=waiting"))
+        #expect(!trace.contains("p]=waiting+question"))
     }
 
     @Test("Clicking a card focuses the terminal and acknowledges that Session only")
