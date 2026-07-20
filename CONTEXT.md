@@ -71,7 +71,7 @@ Jauges d'usage Claude (fenêtres 5 h et 7 jours, % de contexte) reçues via le t
 Action de cliquer une carte de Session pour ramener le focus sur son terminal (Ghostty).
 
 **Réponse depuis l'Island** :
-Débloquer une Session « en attente » sans quitter l'Island, en injectant la frappe correspondant à l'option choisie (question ou permission) dans le terminal de cette Session.
+Débloquer une Session « en attente » sans quitter l'Island, en injectant la frappe correspondant à l'option choisie (question ou permission) dans le terminal de cette Session. **Débrayable** par un réglage du menu (défaut **on**, c'est la valeur de la feature) : off → affichage seul, le clic dégrade en Click-to-focus, aucune Injection. Requiert la **permission Accessibilité** (accordée par binaire) ; sans elle, la feature **dégrade en affichage + focus** et guide vers Réglages Système au premier usage (jamais bloquant, ADR-0009). NB : `AXIsProcessTrusted()` peut rester obsolète tant qu'`island.app` n'est pas relancée après l'octroi.
 _Avoid_ : réponse inline, quick reply
 
 **Injection** :
