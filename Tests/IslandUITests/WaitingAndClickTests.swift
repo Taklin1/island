@@ -51,6 +51,37 @@ struct WaitingAndClickTests {
         #expect(permission.question == nil)
     }
 
+    @Test("A buttonless waiting card surfaces the permission ask; buttons or non-waiting drop it (#29)")
+    func waitingCardSurfacesPermissionMessage() {
+        // An escalated permission block: no extractable options, so the card
+        // shows the Notification's ask instead — WHAT is waiting, with no
+        // buttons (display only, click still degrades to focus).
+        let permission = SessionCard(
+            session: Session(
+                id: "p", state: .waiting, agent: "claude-code",
+                waitingMessage: "Claude needs your permission to use Bash"),
+            home: "/Users/loic")
+        #expect(permission.question == nil)
+        #expect(permission.waitingMessage == "Claude needs your permission to use Bash")
+
+        // When buttons ARE shown, the question label is the card's text; the
+        // generic message would be redundant, so the card never doubles it.
+        let question = PendingQuestion(prompt: "Which?", options: [.init(label: "A")])
+        let withButtons = SessionCard(
+            session: Session(
+                id: "q", state: .waiting, agent: "claude-code",
+                pendingQuestion: question, waitingMessage: "ignored"),
+            home: "/Users/loic")
+        #expect(withButtons.waitingMessage == nil)
+
+        // A stale message on a resumed Session never leaks onto the card.
+        let running = SessionCard(
+            session: Session(
+                id: "r", state: .running, agent: "claude-code", waitingMessage: "stale"),
+            home: "/Users/loic")
+        #expect(running.waitingMessage == nil)
+    }
+
     @Test("The sessions trace surfaces a waiting Session's pending question and option count")
     func sessionsTraceShowsPendingQuestion() {
         let question = PendingQuestion(
@@ -65,6 +96,21 @@ struct WaitingAndClickTests {
         #expect(trace.contains("demo[w]=waiting+question(3)"))
         #expect(trace.contains("demo[p]=waiting"))
         #expect(!trace.contains("p]=waiting+question"))
+    }
+
+    @Test("The sessions trace marks a buttonless wait that surfaced its ask (#29 FP hook)")
+    func sessionsTraceShowsSurfacedWaitingMessage() {
+        let permission = Session(
+            id: "p", state: .waiting, cwd: "/tmp/demo", agent: "claude-code",
+            waitingMessage: "Claude needs your permission to use Bash")
+        let bare = Session(id: "b", state: .waiting, cwd: "/tmp/demo", agent: "claude-code")
+
+        let trace = IslandController.sessionsTrace(for: [permission, bare])
+        // The FP asserts the escalated permission surfaced (state-first, #29);
+        // a bare wait with no message carries no marker.
+        #expect(trace.contains("demo[p]=waiting+msg"))
+        #expect(trace.contains("demo[b]=waiting"))
+        #expect(!trace.contains("b]=waiting+msg"))
     }
 
     @Test("Clicking a card focuses the terminal and acknowledges that Session only")
