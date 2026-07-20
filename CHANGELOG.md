@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.18
+
+- #43 Panneau Étendu **défilable** et **plafonné** à ~1/4 de la hauteur d'écran : `SessionCardsView` enveloppe sa liste dans une `ScrollView(.vertical)` (scrollers macOS standards, pas d'indicateur permanent) et borne sa hauteur via la fonction pure `SessionCardsView.cappedHeight(contentHeight:screenHeight:)` = `min(contenu, 0,25 × NSScreen.frame.height)` — bien sous la borne vendorée demi-écran (non patchée). Sous le plafond : hauteur intrinsèque mesurée par `GeometryReader` (pas d'espace vide à 1–2 Sessions) ; au-delà : le surplus défile, toutes les cartes atteignables. Le défilement ne rend jamais le panneau actif (`.nonactivatingPanel` / `FirstMouseHostingView` #33 préservés). (Épopée #46.)
+
 ## 0.1.17
 
 - #44 Panneau Étendu : cartes triées par **Priorité d'état** (waiting > terminé > working > idle), départage par récence *par groupe* (`waiting` = plus ancien d'abord contre l'oubli, terminé/working/idle = plus frais d'abord), ordre déterministe (départage final par `id`, donc pas de sautillement) et réordonnancement animé. Le rang est **centralisé** dans `SessionState.priorityRank` (source unique) et consommé aussi par le choix du Peek (`mostPressingForPeek`) et l'Icône animée (`SpriteAnimation.menuBarMascot`) — fin des copies inline. Terme « Priorité d'état » ajouté au glossaire `CONTEXT.md`. (Épopée #46.)
