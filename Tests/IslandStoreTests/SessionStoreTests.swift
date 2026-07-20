@@ -124,23 +124,109 @@ struct SessionStoreTests {
         #expect(store.sessions[0].needsAcknowledgement)
     }
 
-    @Test("A waiting event carries the extracted question onto the Session, still to acknowledge")
-    func waitingCarriesPendingQuestion() {
+    @Test("The question tool's PreToolUse stashes the question; entering waiting promotes it (#77)")
+    func questionStashedThenPromotedOnWaiting() {
+        // The real captured sequence (docs/spikes/77-capture-pretooluse-
+        // askuserquestion.md): PreToolUse(AskUserQuestion) carries the parsed
+        // question, THEN the blocking Notification (which carries no options)
+        // puts the Session in waiting.
         let store = SessionStore()
         let question = PendingQuestion(
             prompt: "Which sprite direction?",
             options: [.init(label: "Bots"), .init(label: "Blobs")])
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Go"), agent: "claude-code"))
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .toolStarted(tool: "AskUserQuestion"),
+            agent: "claude-code", question: question))
+
+        // Stashed, not displayed: buttons are visible IFF the Session waits.
+        #expect(store.sessions[0].state == .running)
+        #expect(store.sessions[0].pendingQuestion == nil)
+
         store.apply(AgentEvent(
             sessionID: "abc123",
-            kind: .waitingForUser(message: nil),
-            agent: "claude-code",
-            question: question
-        ))
+            kind: .waitingForUser(message: "Claude needs your permission"),
+            agent: "claude-code"))
 
         #expect(store.sessions[0].state == .waiting)
         #expect(store.sessions[0].pendingQuestion == question)
+        // Buttons shown → the generic message would be redundant (#29 mirror).
+        #expect(store.sessions[0].waitingMessage == nil)
         // Carrying the question (buttons) must not pre-acknowledge the Liseré.
         #expect(store.sessions[0].needsAcknowledgement)
+    }
+
+    @Test("The question tool's PostToolUse resolves the question: stash and buttons cleared (#77)")
+    func questionToolFinishedClearsStashAndQuestion() {
+        // Answered in the terminal: the PostToolUse of the SAME tool arrives
+        // while the Session still waits (the next state change comes later).
+        // The now-answered question must not keep showing buttons.
+        let store = SessionStore()
+        let question = PendingQuestion(prompt: "Q?", options: [.init(label: "A"), .init(label: "B")])
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Go"), agent: "claude-code"))
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .toolStarted(tool: "AskUserQuestion"),
+            agent: "claude-code", question: question))
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .waitingForUser(message: nil), agent: "claude-code"))
+        #expect(store.sessions[0].pendingQuestion == question)
+
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .toolFinished(tool: "AskUserQuestion"), agent: "claude-code"))
+
+        #expect(store.sessions[0].pendingQuestion == nil)
+        #expect(store.sessions[0].questionStash == nil)
+    }
+
+    @Test("Another tool's PostToolUse never resolves a stashed question (#77)")
+    func otherToolFinishedKeepsStash() {
+        // A parallel tool call finishing between the question's PreToolUse and
+        // the blocking Notification must not eat the question.
+        let store = SessionStore()
+        let question = PendingQuestion(prompt: "Q?", options: [.init(label: "A"), .init(label: "B")])
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Go"), agent: "claude-code"))
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .toolStarted(tool: "AskUserQuestion"),
+            agent: "claude-code", question: question))
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .toolFinished(tool: "Bash"), agent: "claude-code"))
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .waitingForUser(message: nil), agent: "claude-code"))
+
+        #expect(store.sessions[0].pendingQuestion == question)
+    }
+
+    @Test("The stash follows pendingQuestion's lifecycle: prompt, turn end and Island answer clear it (#77)")
+    func stashClearedWhereverQuestionIs() {
+        let store = SessionStore()
+        let question = PendingQuestion(prompt: "Q?", options: [.init(label: "A")])
+        func stashQuestion() {
+            store.apply(AgentEvent(
+                sessionID: "abc123", kind: .toolStarted(tool: "AskUserQuestion"),
+                agent: "claude-code", question: question))
+            #expect(store.sessions[0].questionStash != nil)
+        }
+
+        // A fresh prompt starts a fresh turn: no stale stash may cross it.
+        stashQuestion()
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "next"), agent: "claude-code"))
+        #expect(store.sessions[0].questionStash == nil)
+
+        // A finished turn carries no live question either (#26 mirror).
+        stashQuestion()
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0),
+            agent: "claude-code"))
+        #expect(store.sessions[0].questionStash == nil)
+
+        // Answering from the Island (#27) resolves the question: the stash must
+        // not survive to be re-promoted by a stray notification.
+        stashQuestion()
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .waitingForUser(message: nil), agent: "claude-code"))
+        store.resumeAfterAnswer(sessionID: "abc123")
+        #expect(store.sessions[0].questionStash == nil)
+        #expect(store.sessions[0].pendingQuestion == nil)
     }
 
     @Test("A waiting event with no question (permission) leaves the Session buttonless")
@@ -198,13 +284,33 @@ struct SessionStoreTests {
         let store = SessionStore()
         let question = PendingQuestion(prompt: "Which?", options: [.init(label: "A"), .init(label: "B")])
         store.apply(AgentEvent(
+            sessionID: "abc123", kind: .toolStarted(tool: "AskUserQuestion"),
+            agent: "claude-code", question: question))
+        store.apply(AgentEvent(
             sessionID: "abc123",
             kind: .waitingForUser(message: "Claude is asking a question"),
-            agent: "claude-code",
-            question: question))
+            agent: "claude-code"))
 
         #expect(store.sessions[0].pendingQuestion == question)
         #expect(store.sessions[0].waitingMessage == nil)
+    }
+
+    @Test("A real permission block (gated tool's PreToolUse, no question) stays buttonless with its ask (#29/#77)")
+    func permissionSequenceKeepsButtonlessMessage() {
+        // The real escalated-permission sequence: the gated tool's PreToolUse
+        // (no question in its payload) then the blocking Notification. No stash
+        // → no promotion → no buttons, the human ask surfaces (#29 unchanged).
+        let store = SessionStore()
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Go"), agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .toolStarted(tool: "Bash"), agent: "claude-code"))
+        store.apply(AgentEvent(
+            sessionID: "abc123",
+            kind: .waitingForUser(message: "Claude needs your permission to use Bash"),
+            agent: "claude-code"))
+
+        #expect(store.sessions[0].state == .waiting)
+        #expect(store.sessions[0].pendingQuestion == nil)
+        #expect(store.sessions[0].waitingMessage == "Claude needs your permission to use Bash")
     }
 
     @Test("A buttonless wait's message never lingers past waiting (#29)")
@@ -239,25 +345,28 @@ struct SessionStoreTests {
     func answeringClearsPendingQuestion() {
         let store = SessionStore()
         let question = PendingQuestion(prompt: "Q?", options: [.init(label: "A")])
-        store.apply(AgentEvent(
-            sessionID: "abc123", kind: .waitingForUser(message: nil),
-            agent: "claude-code", question: question))
-        #expect(store.sessions[0].pendingQuestion != nil)
+        func enterQuestionWait() {
+            // The real sequence (#77): the question tool's PreToolUse stashes,
+            // the blocking Notification promotes.
+            store.apply(AgentEvent(
+                sessionID: "abc123", kind: .toolStarted(tool: "AskUserQuestion"),
+                agent: "claude-code", question: question))
+            store.apply(AgentEvent(
+                sessionID: "abc123", kind: .waitingForUser(message: nil), agent: "claude-code"))
+            #expect(store.sessions[0].pendingQuestion != nil)
+        }
 
         // A new prompt, a resumed tool, or a finished turn all leave waiting:
         // the stale question must not linger on the card.
+        enterQuestionWait()
         store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "next"), agent: "claude-code"))
         #expect(store.sessions[0].pendingQuestion == nil)
 
-        store.apply(AgentEvent(
-            sessionID: "abc123", kind: .waitingForUser(message: nil),
-            agent: "claude-code", question: question))
+        enterQuestionWait()
         store.apply(AgentEvent(sessionID: "abc123", kind: .toolStarted(tool: "Bash"), agent: "claude-code"))
         #expect(store.sessions[0].pendingQuestion == nil)
 
-        store.apply(AgentEvent(
-            sessionID: "abc123", kind: .waitingForUser(message: nil),
-            agent: "claude-code", question: question))
+        enterQuestionWait()
         store.apply(AgentEvent(
             sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0),
             agent: "claude-code"))
@@ -605,8 +714,11 @@ struct SessionStoreTests {
         let question = PendingQuestion(prompt: "Postgres or SQLite?", options: [
             .init(label: "Postgres"), .init(label: "SQLite")])
         store.apply(AgentEvent(
-            sessionID: "s", kind: .waitingForUser(message: nil),
+            sessionID: "s", kind: .toolStarted(tool: "AskUserQuestion"),
             cwd: "/tmp/demo", terminal: "ghostty", agent: "claude-code", question: question))
+        store.apply(AgentEvent(
+            sessionID: "s", kind: .waitingForUser(message: nil),
+            cwd: "/tmp/demo", terminal: "ghostty", agent: "claude-code"))
         #expect(store.sessions[0].state == .waiting)
         #expect(store.sessions[0].needsAcknowledgement)
         #expect(store.sessions[0].pendingQuestion != nil)

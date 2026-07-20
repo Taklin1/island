@@ -37,10 +37,11 @@ public struct Session: Identifiable, Equatable, Sendable {
     /// its turn is not done — and the count feeds the discreet tally on the
     /// Extended card (Q6). Reset to zero when a new turn starts.
     public var activeSubagentCount: Int
-    /// The AskUserQuestion this Session is blocked on (issue #26), extracted
-    /// locally from the transcript. Set only while `.waiting` on an extractable
-    /// question; cleared on any transition away from waiting so an answered
-    /// question is never re-shown. `nil` = no buttons (Click-to-focus, US10).
+    /// The AskUserQuestion this Session is blocked on (issue #26), promoted
+    /// from ``questionStash`` — the question the tool's own PreToolUse payload
+    /// carried (#77). Set only while `.waiting` on an extractable question;
+    /// cleared on any transition away from waiting so an answered question is
+    /// never re-shown. `nil` = no buttons (Click-to-focus, US10).
     public var pendingQuestion: PendingQuestion?
     /// The human-readable ask of a *buttonless* block (issue #29): the message
     /// the blocking Notification carried — e.g. "Claude needs your permission to
@@ -51,6 +52,28 @@ public struct Session: Identifiable, Equatable, Sendable {
     /// transition away from waiting, exactly like ``pendingQuestion``. `nil`
     /// whenever buttons are shown, or the Notification carried no message.
     public var waitingMessage: String?
+    /// The question parsed from the question tool's PreToolUse payload (issue
+    /// #77), held while that tool call runs. NEVER displayed: the UI only ever
+    /// reads ``pendingQuestion``, and the stash is promoted into it exactly
+    /// when the Session enters waiting — that promotion point is what keeps
+    /// the invariant "buttons visible ⟺ Session waiting". Cleared everywhere
+    /// ``pendingQuestion`` is, plus on the same tool's PostToolUse (the
+    /// question got answered in the terminal).
+    public var questionStash: QuestionStash?
+
+    /// A parsed question riding between the question tool's PreToolUse and the
+    /// Session's entry into waiting (issue #77).
+    public struct QuestionStash: Equatable, Sendable {
+        /// The tool whose PreToolUse carried the question — its PostToolUse is
+        /// what invalidates the stash (never another tool's).
+        public let tool: String
+        public let question: PendingQuestion
+
+        public init(tool: String, question: PendingQuestion) {
+            self.tool = tool
+            self.question = question
+        }
+    }
 
     /// Human-readable project name: last path component of the cwd.
     public var projectName: String {
@@ -73,7 +96,8 @@ public struct Session: Identifiable, Equatable, Sendable {
         needsAcknowledgement: Bool = false,
         activeSubagentCount: Int = 0,
         pendingQuestion: PendingQuestion? = nil,
-        waitingMessage: String? = nil
+        waitingMessage: String? = nil,
+        questionStash: QuestionStash? = nil
     ) {
         self.id = id
         self.state = state
@@ -90,6 +114,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         self.activeSubagentCount = activeSubagentCount
         self.pendingQuestion = pendingQuestion
         self.waitingMessage = waitingMessage
+        self.questionStash = questionStash
     }
 }
 
@@ -192,20 +217,38 @@ public final class SessionStore: ObservableObject {
             // live list from `background_tasks`.
             session.activeSubagentCount = 0
             // A resolved AskUserQuestion never lingers into the next turn (#26);
-            // nor does a buttonless block's ask (#29).
+            // nor does a buttonless block's ask (#29) or a stashed question (#77).
             session.pendingQuestion = nil
             session.waitingMessage = nil
+            session.questionStash = nil
         case let .toolStarted(tool):
             session.state = .running
             session.currentTool = tool
             session.needsAcknowledgement = false
             session.pendingQuestion = nil
             session.waitingMessage = nil
+            // The question tool's PreToolUse carries the parsed question (#77):
+            // stash it, NOT display it — promotion happens only when the
+            // Session actually enters waiting. Any other tool starting carries
+            // no question and thereby invalidates a stale stash.
+            session.questionStash = event.question.map {
+                Session.QuestionStash(tool: tool, question: $0)
+            }
             if session.turnStartedAt == nil {
                 session.turnStartedAt = timestamp
             }
-        case .toolFinished:
+        case let .toolFinished(tool):
             session.currentTool = nil
+            // The question tool's PostToolUse means the question was answered
+            // in the terminal (#77 capture: it fires with the answers): the
+            // stash and any promoted buttons are stale. Only the SAME tool
+            // resolves them — a parallel tool finishing must not eat a live
+            // question. The buttonless ask mirrors the same lifecycle (#29).
+            if session.questionStash?.tool == tool {
+                session.questionStash = nil
+                session.pendingQuestion = nil
+                session.waitingMessage = nil
+            }
         case let .turnEnded(awaitsReply, liveSubagentCount):
             // The main turn's Stop fired, carrying the live Sous-agent tally
             // read from `background_tasks` at this exact Stop (#48, ADR-0008
@@ -223,9 +266,11 @@ public final class SessionStore: ObservableObject {
             // its prose in `lastSummary`, never through a structured
             // AskUserQuestion tool — so any pending one is cleared here whatever
             // the resolution branch (#26): the Stop path carries no options.
-            // A buttonless block's ask (#29) does not survive the turn's end.
+            // A buttonless block's ask (#29) does not survive the turn's end,
+            // nor does a stashed question (#77): the Stop path carries no options.
             session.pendingQuestion = nil
             session.waitingMessage = nil
+            session.questionStash = nil
             if awaitsReply {
                 session.state = .waiting
                 session.turnStartedAt = nil
@@ -251,18 +296,21 @@ public final class SessionStore: ObservableObject {
                 // Inside the guard on purpose — a stray notification on an ended
                 // turn must still alter nothing (#31 non-regression).
                 session.currentTool = nil
-                // The extracted AskUserQuestion (issue #26) — or nil for a
-                // permission/free-text block — rides the event and is attached
-                // only when we actually enter waiting; showing buttons never
-                // clears the Liseré. A stray notification on an ended turn
-                // attaches nothing.
-                session.pendingQuestion = event.question
+                // Promotion (#77): the stash the question tool's PreToolUse
+                // left — or nil for a permission/free-text block, whose stash
+                // never existed — becomes the displayed question only when we
+                // actually enter waiting, so buttons are visible ⟺ the Session
+                // waits. The stash itself survives until the tool's PostToolUse
+                // resolves it. Showing buttons never clears the Liseré. A stray
+                // notification on an ended turn attaches nothing.
+                session.pendingQuestion = session.questionStash?.question
                 // A buttonless block (permission prompt, or an unextractable
                 // question — US10) keeps the Notification's human-readable ask
                 // so the card can still say WHAT is waiting (issue #29). When
                 // buttons ARE shown the question label is what the card reads,
-                // so the generic message would be redundant → dropped.
-                session.waitingMessage = event.question == nil ? message : nil
+                // so the generic message would be redundant → dropped. Mirror
+                // unchanged by #77: message iff no (promoted) question.
+                session.waitingMessage = session.pendingQuestion == nil ? message : nil
             }
         }
 
@@ -328,6 +376,7 @@ public final class SessionStore: ObservableObject {
         sessions[index].state = .running
         sessions[index].pendingQuestion = nil
         sessions[index].waitingMessage = nil
+        sessions[index].questionStash = nil
         sessions[index].needsAcknowledgement = false
         sessions[index].turnStartedAt = timestamp
         sessions[index].lastActivityAt = timestamp

@@ -150,6 +150,148 @@ struct ClaudeCodeAdapterTests {
         #expect(event.kind == .toolStarted(tool: "Bash"))
     }
 
+    // MARK: - The question rides the PreToolUse payload (issue #77, capture 2026-07-20)
+
+    @Test("PreToolUse(AskUserQuestion) carries the parsed question, verbatim and ordered (#77)")
+    func preToolUseAskUserQuestionCarriesQuestion() throws {
+        // Fixture from the real capture (docs/spikes/77-capture-pretooluse-
+        // askuserquestion.md): tool_input.questions[] is present BEFORE the
+        // question is displayed, options ordered — the index IS the TUI key.
+        let fixture = Data("""
+        {
+          "session_id": "abc123",
+          "transcript_path": "/tmp/abc123.jsonl",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "AskUserQuestion",
+          "tool_input": {
+            "questions": [
+              {
+                "question": "La vraie AskUserQuestion a-t-elle été déclenchée puis répondue dans la session jetable ?",
+                "header": "Capture #77",
+                "options": [
+                  {"label": "Fait — question répondue", "description": "La question s'est affichée."},
+                  {"label": "Problème", "description": "Quelque chose n'a pas marché — je décris en note."}
+                ],
+                "multiSelect": false
+              }
+            ]
+          }
+        }
+        """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: fixture))
+        #expect(event.kind == .toolStarted(tool: "AskUserQuestion"))
+        let question = try #require(event.question)
+        #expect(question.prompt
+            == "La vraie AskUserQuestion a-t-elle été déclenchée puis répondue dans la session jetable ?")
+        #expect(question.options.map(\.label) == ["Fait — question répondue", "Problème"])
+        #expect(question.options.map(\.description) == [
+            "La question s'est affichée.",
+            "Quelque chose n'a pas marché — je décris en note.",
+        ])
+    }
+
+    @Test("A multiSelect question degrades: no question on the event (#77 new guard)")
+    func multiSelectQuestionDegrades() throws {
+        // A multi-select TUI is not a numbered one-key menu: injecting an index
+        // would not answer it. Same safety invariant as ADR-0009 — no honest
+        // mapping, no buttons.
+        let fixture = Data("""
+        {
+          "session_id": "abc123",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "AskUserQuestion",
+          "tool_input": {
+            "questions": [
+              {
+                "question": "Which features do you want to enable?",
+                "header": "Features",
+                "options": [
+                  {"label": "Feature A", "description": "d1"},
+                  {"label": "Feature B", "description": "d2"}
+                ],
+                "multiSelect": true
+              }
+            ]
+          }
+        }
+        """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: fixture))
+        #expect(event.kind == .toolStarted(tool: "AskUserQuestion"))
+        #expect(event.question == nil)
+    }
+
+    @Test("A call posing several questions degrades: no faked mapping (guard migrated, #77)")
+    func multiQuestionCallDegrades() throws {
+        let fixture = Data("""
+        {
+          "session_id": "abc123",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "AskUserQuestion",
+          "tool_input": {
+            "questions": [
+              {"question": "Q1?", "header": "H1", "multiSelect": false,
+               "options": [{"label": "A"}, {"label": "B"}]},
+              {"question": "Q2?", "header": "H2", "multiSelect": false,
+               "options": [{"label": "C"}, {"label": "D"}]}
+            ]
+          }
+        }
+        """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: fixture))
+        #expect(event.question == nil)
+    }
+
+    @Test("A question with no options degrades: no buttons (guard migrated, US10/#77)")
+    func questionWithoutOptionsDegrades() throws {
+        let fixture = Data("""
+        {
+          "session_id": "abc123",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "AskUserQuestion",
+          "tool_input": {
+            "questions": [
+              {"question": "Free text?", "header": "H", "multiSelect": false, "options": []}
+            ]
+          }
+        }
+        """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: fixture))
+        #expect(event.question == nil)
+    }
+
+    @Test("An unreadable tool_input still emits the toolStarted event, question nil (#77)")
+    func unreadableToolInputStillFlows() throws {
+        // Defensive contract: a surprising tool_input shape degrades to "no
+        // buttons", it never drops the event (the Session must keep living).
+        let fixture = Data("""
+        {
+          "session_id": "abc123",
+          "cwd": "/Users/loic/Documents/island",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "AskUserQuestion",
+          "tool_input": {"questions": "surprise-string"}
+        }
+        """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: fixture))
+        #expect(event.kind == .toolStarted(tool: "AskUserQuestion"))
+        #expect(event.question == nil)
+    }
+
+    @Test("A non-question tool's PreToolUse carries no question (#77)")
+    func otherToolCarriesNoQuestion() throws {
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.preToolUse))
+        #expect(event.question == nil)
+    }
+
     @Test("PostToolUse hook payload becomes a 'tool finished' event")
     func postToolUseBecomesToolFinished() throws {
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.postToolUse))
@@ -438,8 +580,13 @@ struct ClaudeCodeAdapterTests {
         #expect(event.kind == .waitingForUser(message: "Claude needs your permission to use Bash"))
     }
 
-    @Test("A blocking Notification reads the transcript and attaches the pending AskUserQuestion")
-    func notificationAttachesPendingQuestion() throws {
+    @Test("A blocking Notification never carries a question — the question rides the PreToolUse (#77, no fallback)")
+    func notificationNeverCarriesQuestion() throws {
+        // Even with a readable transcript containing an unanswered
+        // AskUserQuestion tool_use (a state Claude Code never writes while
+        // waiting — capture 2026-07-20), the Notification path extracts
+        // nothing: the transcript source is retired WITHOUT fallback, the
+        // store promotes the PreToolUse stash instead.
         let transcript = FileManager.default.temporaryDirectory
             .appendingPathComponent("adapter-ask-\(UUID().uuidString).jsonl")
         try Data("""
@@ -461,15 +608,14 @@ struct ClaudeCodeAdapterTests {
 
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
         #expect(event.kind == .waitingForUser(message: "Claude is asking a question"))
-        let question = try #require(event.question)
-        #expect(question.prompt == "Which sprite direction?")
-        #expect(question.options.map(\.label) == ["Bots", "Blobs"])
+        #expect(event.question == nil)
     }
 
     @Test("A blocking Notification with no extractable question still notifies, no buttons (US10)")
     func notificationWithoutQuestionDegrades() throws {
-        // A genuine permission prompt: no readable AskUserQuestion transcript, so
-        // the event flows without a question (the card degrades to Click-to-focus).
+        // A genuine permission prompt: no question rides any PreToolUse, so the
+        // event flows without one (the card degrades to Click-to-focus, and the
+        // store surfaces the human-readable ask, #29).
         let fixture = Data("""
             {
               "session_id": "abc123",
@@ -486,40 +632,6 @@ struct ClaudeCodeAdapterTests {
         #expect(event.question == nil)
     }
 
-    @Test("An escalated permission with a READABLE transcript surfaces no buttons — degrade is content-driven (#29)")
-    func permissionWithReadableTranscriptDegrades() throws {
-        // A real escalated permission (auto-mode): the transcript is perfectly
-        // readable, but its pending tool_use is the gated tool (Bash), NOT an
-        // AskUserQuestion — spike #25 froze that a permission's options live
-        // nowhere the Island can read. So the block degrades to Click-to-focus
-        // by CONTENT (no options in the tail), not because the file was
-        // unreadable (unlike `notificationWithoutQuestionDegrades`, which forces
-        // nil with a missing file). The Notification's human-readable ask still
-        // rides through, so the store can surface it on the buttonless card (#29).
-        let transcript = FileManager.default.temporaryDirectory
-            .appendingPathComponent("adapter-perm-\(UUID().uuidString).jsonl")
-        try Data("""
-            {"isSidechain":false,"type":"user","message":{"role":"user","content":"Run the tests"},"uuid":"u-1","timestamp":"2026-07-20T10:00:00.000Z"}
-            {"isSidechain":false,"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"swift test"}}]},"uuid":"a-1","timestamp":"2026-07-20T10:00:05.000Z"}
-            """.utf8).write(to: transcript)
-        defer { try? FileManager.default.removeItem(at: transcript) }
-
-        let payload = Data("""
-            {
-              "session_id": "abc123",
-              "transcript_path": "\(transcript.path)",
-              "cwd": "/Users/loic/Documents/island",
-              "hook_event_name": "Notification",
-              "notification_type": "permission_prompt",
-              "message": "Claude needs your permission to use Bash"
-            }
-            """.utf8)
-
-        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
-        #expect(event.kind == .waitingForUser(message: "Claude needs your permission to use Bash"))
-        // Readable transcript, but no AskUserQuestion in it → no buttons (#29).
-        #expect(event.question == nil)
-    }
 
     @Test("Informational notifications (auth_success) never put the Session in waiting")
     func informationalNotificationIsIgnored() {

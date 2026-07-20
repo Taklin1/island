@@ -51,6 +51,16 @@ public enum ClaudeCodeAdapter {
         case "PreToolUse":
             guard let tool = payload.toolName else { return nil }
             kind = .toolStarted(tool: tool)
+            // #77 (capture 2026-07-20): the question tool's PreToolUse carries
+            // the full `tool_input.questions[]` verbatim and ordered — BEFORE
+            // the question is displayed. This is the only on-disk/wire source
+            // available while the user is being asked: the transcript only
+            // gets the tool_use once the question is ANSWERED. The store
+            // stashes the parsed question and promotes it when the Session
+            // enters waiting; the adapter stays stateless.
+            if tool == questionToolName {
+                question = pendingQuestion(fromHookPayload: data)
+            }
         case "PostToolUse":
             guard let tool = payload.toolName else { return nil }
             kind = .toolFinished(tool: tool)
@@ -96,13 +106,12 @@ public enum ClaudeCodeAdapter {
             guard isWaitingNotification(type: payload.notificationType, message: payload.message)
             else { return nil }
             kind = .waitingForUser(message: payload.message)
-            // ADR-0002 / spike #25: extract the pending AskUserQuestion locally
-            // from the transcript. Best-effort — a permission/free-text block
-            // yields no question and the card degrades to Click-to-focus (US10).
-            if let path = payload.transcriptPath {
-                question = TranscriptReader.pendingQuestion(
-                    ofTranscriptAt: URL(fileURLWithPath: path))
-            }
+            // No question extraction here (#77): during the wait the transcript
+            // holds NO AskUserQuestion tool_use (Claude Code only writes it once
+            // answered — capture 2026-07-20), so there is nothing to read, by
+            // construction and without fallback. The question rides the
+            // PreToolUse event above; the store promotes its stash when this
+            // event puts the Session in waiting.
         default:
             // Any future unhandled hook is deliberately ignored.
             return nil
@@ -174,6 +183,77 @@ public enum ClaudeCodeAdapter {
             case lastAssistantMessage = "last_assistant_message"
             case message
             case notificationType = "notification_type"
+        }
+    }
+
+    /// Claude Code's structured-question tool — the only tool whose PreToolUse
+    /// carries a user-facing question (#77).
+    static let questionToolName = "AskUserQuestion"
+
+    /// Extracts the ``PendingQuestion`` from a `PreToolUse` payload's
+    /// `tool_input` (issue #77). The format is the one frozen by spike #25 and
+    /// re-verified by the #77 capture: `questions[]`, each with ordered
+    /// `options[]` of `{label, description}` — the array order IS the
+    /// option→key mapping, so everything is kept verbatim.
+    ///
+    /// Defensive, guards migrated from the retired transcript path: returns
+    /// `nil` (the card then shows no buttons and degrades to Click-to-focus,
+    /// US10) unless the payload is a clean single question with options —
+    /// several questions in one call (N>1: the single button row cannot
+    /// honestly express the per-question key mapping), an empty or unreadable
+    /// `options`, or a blank prompt all degrade. New guard (#77):
+    /// `multiSelect == true` degrades too — a multi-select TUI is not a
+    /// numbered one-key menu, so an injected index would not answer it.
+    static func pendingQuestion(fromHookPayload data: Data) -> PendingQuestion? {
+        guard let envelope = try? JSONDecoder().decode(QuestionEnvelope.self, from: data),
+            let questions = envelope.toolInput?.questions, questions.count == 1,
+            let first = questions.first,
+            first.multiSelect != true,
+            let prompt = first.question?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !prompt.isEmpty
+        else { return nil }
+
+        let options: [PendingQuestion.Option] = (first.options ?? []).compactMap { option in
+            guard let label = option.label?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !label.isEmpty
+            else { return nil }
+            let description = option.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return PendingQuestion.Option(
+                label: label,
+                description: (description?.isEmpty ?? true) ? nil : description
+            )
+        }
+        // No extractable options (free text, empty/unreadable list) → degrade.
+        guard !options.isEmpty else { return nil }
+        return PendingQuestion(prompt: prompt, options: options)
+    }
+
+    /// Minimal Codable view of just the `tool_input.questions[]` payload,
+    /// decoded separately from ``HookPayload`` so its parsing stays lenient
+    /// (a surprising shape degrades to "no question", never fails the event).
+    private struct QuestionEnvelope: Decodable {
+        let toolInput: ToolInput?
+        enum CodingKeys: String, CodingKey {
+            case toolInput = "tool_input"
+        }
+
+        struct ToolInput: Decodable {
+            let questions: [Question]?
+        }
+
+        /// One AskUserQuestion entry (spike #25, #77 capture): a label, a
+        /// header, a multi-select flag, and ordered options.
+        struct Question: Decodable {
+            let question: String?
+            let header: String?
+            let multiSelect: Bool?
+            let options: [Option]?
+        }
+
+        /// One ordered option (`{label, description}`).
+        struct Option: Decodable {
+            let label: String?
+            let description: String?
         }
     }
 
