@@ -98,3 +98,32 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
   `com.taklin.island → ~/Applications/island.app` (`sfltool dumpbtm | grep -i
   island`). Tester le login item = lancer le `.app` empaqueté, jamais le binaire
   nu. Voir ADR-0005.
+
+## Comportement des hooks : capturer le fil réel avant de coder une détection
+
+- **Découverte** : une fixture synthétique encode facilement une *croyance*
+  fausse sur ce qu'island reçoit vraiment — elle passe son propre test et échoue
+  en réel. Deux fixes « à l'aveugle » sont morts ainsi sur la fiabilité d'état :
+  le lag du transcript au `Stop` (#39, il faut lire `last_assistant_message`) puis
+  le mauvais modèle de Sous-agent (#48 — aucun `Stop`/`SubagentStop` ne porte
+  d'`agent_id`, c'est le champ `background_tasks` du `Stop` qui liste les
+  Sous-agents vivants ; introuvable sans capture).
+- **Bonne méthode** : avant de coder la détection d'une transition d'état pilotée
+  par un hook que tu n'as **pas observée**, instrumente le build DEV (throwaway,
+  gardé par une variable d'env p.ex. `ISLAND_CAPTURE_48=1`, marqué
+  `TEMP-CAPTURE-*`, JAMAIS l'Island live sur 41414) pour logger chaque hook reçu
+  + l'état résolu vers un `.jsonl`, fais **capturer le cas réel** (runbook à Loïc
+  si le cas exige une vraie session — p.ex. un Sous-agent qui finit seul), puis
+  code contre ce ground truth. Retire l'instrumentation avant le commit du fix
+  (`grep -rE "TEMP-CAPTURE-*" = 0`). Attention : un log qui interpole un objet
+  déjà parsé (`"\(nsArray)"`) peut **déguiser le format du fil** (un tableau JSON
+  rendu en plist) — décode le champ brut, ne te fie pas au rendu du log.
+- **Preuve** : `~/island-hook-capture-39.jsonl` et `~/island-hook-capture-48.jsonl`
+  ont chacune tranché ce que 2 fixtures « raisonnables » avaient faux — dont la
+  découverte de `background_tasks` au `Stop` (ADR-0008 amendé), impossible à
+  deviner. Le FP réel a confirmé le parsing (trace `×1sub`), pas la fixture.
+- **Pourquoi** : justesse — sur le comportement des hooks, une fixture prouve
+  seulement que le code fait ce que la fixture affirme, pas ce que Claude Code
+  envoie. Seule la capture du fil réel ferme l'écart ; la valider ensuite par un
+  FP réel (pas un fixture) est ce qui empêche un repli silencieux de masquer un
+  format mal deviné.
