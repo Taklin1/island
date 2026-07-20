@@ -1,4 +1,5 @@
 import AppKit
+import UserNotifications
 import ClaudeCodeAdapter
 import IslandFocus
 import IslandGlow
@@ -45,6 +46,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastMascotTrace: String?
     /// The bot sprite sheet, decoded once for the menu bar.
     private lazy var botSheet: CGImage? = SpriteSheet.bot.image(named: "bot")
+    /// Mise à jour (issue #91, ADR-0010): the ref to the version menu item of
+    /// #88 — the menu is built once and never rebuilt, so the title mutates in
+    /// place ("island vX.Y.Z — à jour" ↔ "⬆ Mettre à jour vers vY.Z…").
+    private var versionMenuItem: NSMenuItem?
+    /// Daily update check (issue #91); the launch check covers a Mac waking
+    /// from sleep or relaunching, no calendar scheduler needed.
+    private var updateTimer: Timer?
+    /// Fetches the latest release tag. Live = GitHub `releases/latest` (public
+    /// API, no auth); the agentic FP swaps the URL via `ISLAND_UPDATE_FEED_URL`
+    /// to serve a fixture (traced when active, see `makeUpdateFetcher`).
+    private lazy var updateFetcher: UpdateFetcher = Self.makeUpdateFetcher()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let store = store
@@ -64,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         print("island: version \(AppVersion.current.value)")
         installHooksOnFirstLaunch()
         installMenuBarIcon()
+        startUpdateChecks()
         // Réponse depuis l'Island (issue #28): trace the Accessibility
         // permission at launch so the onboarding FP can observe the branch. The
         // value can be stale until the app is relaunched after a grant (spike
@@ -280,6 +293,145 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         print("island: preference statuslineTeeEnabled=\(settings.statuslineTeeEnabled)")
     }
 
+    // MARK: - Mise à jour (issue #91, ADR-0010)
+
+    /// Update check cadence: once at launch (async, like the server start)
+    /// plus a daily timer. A 86 400 s timer does not catch up across sleep,
+    /// but the launch check covers a woken/relaunced Mac — sufficient per the
+    /// AC. Never touches any Session surface (cards/Peek/Liseré).
+    private func startUpdateChecks() {
+        Task { @MainActor in await self.runUpdateCheck(trigger: "launch") }
+        let timer = Timer(timeInterval: 86_400, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                Task { @MainActor in await self.runUpdateCheck(trigger: "daily") }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        updateTimer = timer
+    }
+
+    /// Fetch (nil on any failure) → pure `UpdateCheckGate` verdict → apply.
+    /// Offline or API down is a silent `.unknown`: a stdout trace, nothing
+    /// visible.
+    private func runUpdateCheck(trigger: String) async {
+        let current = Self.updateCheckCurrentVersion()
+        let latestTag = await updateFetcher.fetchLatestTag()
+        let verdict = UpdateCheckGate.verdict(
+            currentVersion: current,
+            latestTag: latestTag,
+            lastNotifiedVersion: settings.lastNotifiedUpdateVersion
+        )
+        apply(verdict, currentVersion: current, trigger: trigger)
+    }
+
+    /// Applies a verdict: one stdout trace per verdict (the agentic FP
+    /// asserts these), the in-place menu title mutation, and — first sighting
+    /// of a version only — the single macOS notification, after which
+    /// `lastNotifiedUpdateVersion` is persisted (the write lives here, never
+    /// in the pure gate).
+    private func apply(_ verdict: UpdateVerdict, currentVersion: String, trigger: String) {
+        switch verdict {
+        case .unknown:
+            // Dev build (US15), failed fetch or unparseable version: leave
+            // the resting menu title of #88 untouched.
+            print("island: update verdict=unknown (dev build or no comparable release, trigger=\(trigger))")
+        case .upToDate:
+            print("island: update verdict=up-to-date (v\(currentVersion), trigger=\(trigger))")
+            setVersionMenuItem(title: "island v\(currentVersion) — à jour", updateAvailable: false)
+        case .updateAvailable(let version, let notify):
+            print("island: update available v\(version) (notify=\(notify), trigger=\(trigger))")
+            setVersionMenuItem(title: "⬆ Mettre à jour vers v\(version)…", updateAvailable: true)
+            if notify {
+                postUpdateNotification(version: version)
+                settings.lastNotifiedUpdateVersion = version
+            }
+        }
+    }
+
+    /// Mutates the version item of #88 in place (the menu is never rebuilt).
+    /// With an update available the item becomes clickable — a traced no-op
+    /// until #92 wires the install script to it.
+    private func setVersionMenuItem(title: String, updateAvailable: Bool) {
+        guard let item = versionMenuItem else { return }
+        if item.title != title {
+            item.title = title
+            print("island: update menu item title=\"\(title)\"")
+        }
+        item.isEnabled = updateAvailable
+        item.action = updateAvailable ? #selector(updateClicked) : nil
+        item.target = updateAvailable ? self : nil
+    }
+
+    /// One macOS notification per version (ADR-0010), tolerated-with-trace
+    /// like `LoginItem`: `UNUserNotificationCenter.current()` raises when the
+    /// process has no bundle (the bare SwiftPM binary the agentic FP drives),
+    /// so the bundle guard skips it there — the real banner is only provable
+    /// on the packaged island.app; the FP asserts the traces.
+    private func postUpdateNotification(version: String) {
+        guard Bundle.main.bundleIdentifier != nil else {
+            print("island: update notification skipped (bare SwiftPM binary, no bundle) (v\(version))")
+            return
+        }
+        Task {
+            do {
+                let center = UNUserNotificationCenter.current()
+                let granted = try await center.requestAuthorization(options: [.alert, .sound])
+                guard granted else {
+                    // Refusal never blocks the check (ADR-0010): the menu
+                    // item still proposes the update.
+                    print("island: update notification not authorized (v\(version))")
+                    return
+                }
+                let content = UNMutableNotificationContent()
+                content.title = "island"
+                content.body = "Mise à jour disponible : v\(version). "
+                    + "Ouvrez le menu island pour l'installer."
+                let request = UNNotificationRequest(
+                    identifier: "island-update-\(version)", content: content, trigger: nil)
+                try await center.add(request)
+                print("island: update notification posted (v\(version))")
+            } catch {
+                print("island: update notification failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    @objc private func checkForUpdatesClicked() {
+        print("island: update check requested from menu")
+        Task { @MainActor in await self.runUpdateCheck(trigger: "menu") }
+    }
+
+    /// Clicking "⬆ Mettre à jour vers vY.Z…" stays a traced no-op; #92 wires
+    /// the install script (the same one as the Canal d'installation) to it.
+    @objc private func updateClicked() {
+        print("island: update click (no-op, wired in #92)")
+    }
+
+    /// Agentic FP seam (issue #91): the bare SwiftPM binary is always `-dev`
+    /// (US15: it never updates), so the FP overrides the two gate inputs to
+    /// exercise the update-available path against a served fixture. Both
+    /// overrides are traced when active and are read ONLY by the update
+    /// check — the install action of #92 must consult `AppVersion.current`
+    /// directly, so the dev guard on real updates cannot be bypassed here.
+    private static func makeUpdateFetcher() -> UpdateFetcher {
+        guard let feed = ProcessInfo.processInfo.environment["ISLAND_UPDATE_FEED_URL"] else {
+            return .live
+        }
+        print("island: update feed override \(feed) (agentic FP seam)")
+        return UpdateFetcher { await UpdateFetcher.fetchTag(fromURLString: feed) }
+    }
+
+    private static func updateCheckCurrentVersion() -> String {
+        guard
+            let override = ProcessInfo.processInfo.environment["ISLAND_UPDATE_CURRENT_OVERRIDE"]
+        else {
+            return AppVersion.current.value
+        }
+        print("island: update current-version override \(override) (agentic FP seam)")
+        return override
+    }
+
     // MARK: - Menu bar
 
     private func installMenuBarIcon() {
@@ -361,11 +513,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Version embarquée (issue #88, US5): the resting menu shows which
         // build runs. Display-only — no action, and explicitly disabled since
-        // autoenablesItems is off.
+        // autoenablesItems is off. The update check (issue #91) keeps a ref
+        // and mutates this item in place ("island vX.Y.Z — à jour" ↔
+        // "⬆ Mettre à jour vers vY.Z…"); the menu itself is never rebuilt.
         let version = NSMenuItem(
             title: "island v\(AppVersion.current.value)", action: nil, keyEquivalent: "")
         version.isEnabled = false
         menu.addItem(version)
+        versionMenuItem = version
+
+        // Mise à jour (issue #91): manual check, same path as the launch and
+        // daily checks — every verdict lands as a stdout trace + the version
+        // item title above.
+        let checkForUpdates = NSMenuItem(
+            title: "Vérifier les mises à jour…",
+            action: #selector(checkForUpdatesClicked), keyEquivalent: "")
+        checkForUpdates.target = self
+        menu.addItem(checkForUpdates)
 
         menu.addItem(.separator())
 
