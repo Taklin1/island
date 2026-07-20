@@ -156,6 +156,24 @@ struct SessionStoreTests {
         #expect(store.sessions[0].pendingQuestion == nil)
     }
 
+    @Test("Entering waiting clears any running tool — a waiting Session has no tool in flight (#70)")
+    func waitingClearsCurrentTool() {
+        let store = SessionStore()
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "go"), agent: "claude-code"))
+        // A PreToolUse (e.g. AskUserQuestion) sets currentTool right before the
+        // block's Notification arrives — the real #70 sequence.
+        store.apply(AgentEvent(sessionID: "abc123", kind: .toolStarted(tool: "AskUserQuestion"), agent: "claude-code"))
+        #expect(store.sessions[0].currentTool == "AskUserQuestion")
+
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .waitingForUser(message: "May I?"), agent: "claude-code"))
+
+        // A waiting Session is not running a tool: the stale "outil : …" label
+        // must not linger above the question/message on the card (#70).
+        #expect(store.sessions[0].state == .waiting)
+        #expect(store.sessions[0].currentTool == nil)
+    }
+
     @Test("A buttonless permission wait surfaces the Notification message so the card says what blocks (#29)")
     func waitingWithoutQuestionSurfacesMessage() {
         let store = SessionStore()
