@@ -39,6 +39,25 @@ public enum GhosttyWindowTargeting {
         return matches.count == 1 ? .certain(windowIndex: matches[0]) : .uncertain
     }
 
+    /// Anti-bare-shell guard (issue #81): whether a window title is exactly
+    /// the Session's cwd rendered as a shell prompt path (`~/Documents/island`
+    /// or the absolute path) — the signature of a plain shell with no Claude
+    /// Code Session in it (a live Session always rewrites its tab title). The
+    /// #81 capture showed the visible tab's `AXDocument` can match the cwd
+    /// while the Session sits in a hidden tab; refusing bare-shell titles
+    /// closes the detectable half of that residual. `nil`/empty titles are not
+    /// bare-shell (phantom windows never confirm delivery anyway — no doc).
+    public static func titleIsBareShellPath(
+        _ title: String?, cwd: String, homeDirectory: String
+    ) -> Bool {
+        guard var title, !title.isEmpty, let target = normalizedPath(cwd) else { return false }
+        if title == "~" { title = homeDirectory }
+        if title.hasPrefix("~/") {
+            title = homeDirectory + title.dropFirst(1)
+        }
+        return normalizedPath(title) == target
+    }
+
     /// Canonical filesystem path for either a bare cwd (`Session.cwd`) or an
     /// `AXDocument` file URL (`file:///path/`): strips the `file://` scheme,
     /// percent-decodes, and drops a trailing slash so `"/a/b/"` and `"/a/b"`

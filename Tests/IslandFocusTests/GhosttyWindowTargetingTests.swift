@@ -81,3 +81,47 @@ struct GhosttyWindowTargetingTests {
             amongst: ["file:///Users/loic/Documents/island/"]) == .uncertain)
     }
 }
+
+/// The anti-bare-shell guard of issue #81: a visible tab whose title is just
+/// the prompt path is a plain shell, not a Claude Code Session (a live Session
+/// always rewrites its tab title) — delivery must refuse it even though its
+/// `AXDocument` matches the Session's cwd.
+struct BareShellTitleTests {
+    @Test("A title that is the cwd as a ~-path or absolute path is a bare shell")
+    func promptPathTitlesAreBareShell() {
+        #expect(GhosttyWindowTargeting.titleIsBareShellPath(
+            "~/Documents/island", cwd: "/Users/loic/Documents/island",
+            homeDirectory: "/Users/loic"))
+        #expect(GhosttyWindowTargeting.titleIsBareShellPath(
+            "/Users/loic/Documents/island", cwd: "/Users/loic/Documents/island",
+            homeDirectory: "/Users/loic"))
+        // The home directory itself, as Ghostty renders it.
+        #expect(GhosttyWindowTargeting.titleIsBareShellPath(
+            "~", cwd: "/Users/loic", homeDirectory: "/Users/loic"))
+    }
+
+    @Test("A Claude Code task title is not a bare shell — delivery may proceed")
+    func taskTitlesAreNotBareShell() {
+        for title in ["✳ Claude Code", "⠐ Implémenter la livraison fiable (#81)", "👻"] {
+            #expect(!GhosttyWindowTargeting.titleIsBareShellPath(
+                title, cwd: "/Users/loic/Documents/island", homeDirectory: "/Users/loic"))
+        }
+    }
+
+    @Test("A missing or empty title is not treated as a bare shell")
+    func missingTitleIsNotBareShell() {
+        // A nil/empty title alone never blocks: phantom windows expose no
+        // document either, so delivery verification already refuses them.
+        #expect(!GhosttyWindowTargeting.titleIsBareShellPath(
+            nil, cwd: "/Users/loic/Documents/island", homeDirectory: "/Users/loic"))
+        #expect(!GhosttyWindowTargeting.titleIsBareShellPath(
+            "", cwd: "/Users/loic/Documents/island", homeDirectory: "/Users/loic"))
+    }
+
+    @Test("A different project path in the title is not this Session's bare shell")
+    func otherPathIsNotBareShell() {
+        #expect(!GhosttyWindowTargeting.titleIsBareShellPath(
+            "~/Documents/akutia", cwd: "/Users/loic/Documents/island",
+            homeDirectory: "/Users/loic"))
+    }
+}
