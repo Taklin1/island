@@ -7,7 +7,10 @@
 ORCHESTRATION (tu es un sous-agent d'une session orchestratrice ; adaptations NON-NÉGOCIABLES) :
 (a) tu travailles dans un worktree git isolé : `swift build` et `swift test` tournent tels
 quels dedans (chaque worktree a son propre `.build` ; la première compilation résout les
-dépendances SwiftPM, laisse-la finir) ;
+dépendances SwiftPM, laisse-la finir). ATTENTION : le worktree peut démarrer sur un commit
+bootstrap SANS `Sources/` — vérifie-le d'abord (`ls Sources/`), et si l'arbre du projet
+manque, rebranche ta feature depuis la base : `git checkout -b feature/<n>-<slug>
+origin/{BASE}` avant tout code (base = la branche epic, qui contient le code déjà mergé) ;
 (b) ta branche part de {BASE} et ta PR cible {BASE} - jamais develop, jamais main ;
 (c) INTERDIT de modifier le champ de version du projet et `CHANGELOG.md` : propose ta ligne
 de changelog dans le body de la PR (section « Changelog proposé »), l'orchestrateur réconcilie
