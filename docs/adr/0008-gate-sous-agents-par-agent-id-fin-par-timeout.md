@@ -1,5 +1,30 @@
 # Le gate Sous-agents lit `background_tasks` au Stop ; la fin se résout à chaque Stop (plus de timeout)
 
+> ## Amendement 2026-07-20 — le gate compte TOUTE entrée de `background_tasks` (décision #79, implémentation à venir)
+>
+> Le filtre `type == "subagent"` de l'amendement ci-dessous est **trop étroit** :
+> un workflow (outil `Workflow`) vivant au Stop apparaît dans `background_tasks`
+> avec `type: "workflow"` → exclu par le filtre → la Session passe à tort en
+> `done` (bug #79). Ground truth par lecture du schéma Zod dans le **binaire**
+> Claude Code 2.1.215 (voir `docs/agents/agentic-driving.md`, « Schéma des
+> payloads de hooks ») : `type` est un label **ouvert** — « e.g. 'shell',
+> 'subagent', 'monitor', 'workflow'. Falls back to the raw discriminant for
+> unknown types » — et l'intention documentée du champ est précisément de
+> distinguer « session is done » de « session is paused waiting for background
+> work to wake it ».
+>
+> **Décision (Loïc, 2026-07-20)** : le gate compte **toute** entrée de
+> `background_tasks` avec `id` non vide, quel que soit son `type` — pas
+> d'allow-list. Raison : fidèle à l'intention du champ, robuste aux types
+> inconnus/futurs ; toute tâche de fond réveille la session à sa complétion
+> (nouveau tour ⇒ nouveau Stop qui ré-évalue), donc jamais de Session coincée.
+> **Inchangé** : `session_crons` est un champ séparé (schéma distinct
+> `{ id, schedule, recurring, prompt }`), toujours hors du compte.
+> `liveSubagentCount` devient un misnomer — à renommer (p.ex.
+> `liveBackgroundTaskCount`) lors de l'implémentation de #79, qui porte aussi le
+> test de régression (un Stop avec une entrée `type: "workflow"` doit maintenir
+> `.running`).
+
 > ## Amendement 2026-07-19 — pivot `background_tasks` (implémentation #48)
 >
 > La capture ciblée exigée par le « 1er pas » (log `island-hook-capture-48.jsonl`,

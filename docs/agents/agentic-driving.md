@@ -179,3 +179,24 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
   envoie. Seule la capture du fil réel ferme l'écart ; la valider ensuite par un
   FP réel (pas un fixture) est ce qui empêche un repli silencieux de masquer un
   format mal deviné.
+
+## Schéma des payloads de hooks : lisible en clair dans le binaire Claude Code
+
+- **Découverte** : pas besoin d'une capture live pour connaître la **forme** d'un
+  payload de hook — le binaire Claude Code embarque les schémas Zod en clair,
+  avec leurs docstrings `.describe()` (champs, types possibles, sémantique).
+- **Bonne méthode** : `strings -a ~/.local/share/claude/versions/<version> |
+  grep -oE '.{250}<champ>.{250}'` (le binaire est un Mach-O compilé par bun,
+  `grep` direct ne marche pas — passer par `strings`). Résoudre `<version>` via
+  le symlink `$(readlink $(which claude))`. Chercher le nom du champ JSON (p.ex.
+  `background_tasks:`) puis remonter au schéma référencé (p.ex. `_8f=`).
+- **Preuve** : triage #79 — le schéma complet d'une entrée `background_tasks`
+  (`{ id, type, status, description, command?, agent_type?, server?, tool?,
+  name? }`, `type` ∈ « 'shell', 'subagent', 'monitor', 'workflow' » + fallback
+  types inconnus) extrait en 3 greps, là où #48 avait exigé une instrumentation
+  + un runbook de capture live.
+- **Pourquoi** : vitesse + complétude — le schéma donne **tous** les cas
+  possibles (types rares ou futurs inclus), qu'une capture live n'échantillonne
+  que partiellement. La capture live reste nécessaire pour le **comportement**
+  (timing, valeurs effectives, courses — cf. section précédente) ; le binaire
+  donne la **forme**. Les deux se complètent, binaire d'abord.
