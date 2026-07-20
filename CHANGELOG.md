@@ -3,6 +3,26 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.23
+
+- #70 Une Session « en attente » n'expose plus d'outil en cours : le cas `.waitingForUser` de `SessionStore.apply` remet `session.currentTool = nil` à l'entrée **effective** en attente (dans la garde `state != .ended`, non-régression #31), supprimant le libellé « outil : … » fantôme qui restait au-dessus de la question/message quand un `PreToolUse` précédait la `Notification`. Vaut pour les questions comme pour les permissions. (Épopée #22.)
+
+## 0.1.22
+
+- #29 Réponse depuis l'Island étendue aux **prompts de permission escaladés** (auto-mode) — **affichage seul, pas d'injection** : leurs options ne sont extractibles nulle part (absentes du JSONL ; `notification_type == "permission_prompt"` ne distingue pas permission et question ; menu-fixe deviné **rejeté** car il frapperait potentiellement « allow-always », décision de sécurité persistante — US7). La carte en attente **sans boutons** surface donc le message humain de la `Notification` (« Claude needs your permission to use Bash ») via `Session.waitingMessage` (posé/vidé en miroir de `pendingQuestion`, marqueur de trace `+msg`) ; le clic dégrade en Click-to-focus, aucune décision auto. La moitié « injection de permission » reste reportée, figée dans **ADR-0009 § « Résolution #29 »** ; `CONTEXT.md` clarifié. (Épopée #22.)
+
+## 0.1.21
+
+- #28 Onboarding Accessibilité + préférence on/off de la **Réponse depuis l'Island** : le gate pur `AnswerFromIslandGate.action(featureEnabled:permissionGranted:onboardingAlreadyPrompted:)` décide `inject` (feature on ∧ permission accordée) vs `displayAndFocus(guideToSettings:)` — off ou permission absente ⇒ affichage + Click-to-focus, guidage vers Réglages Système au **premier** usage seulement (jamais bloquant, jamais de nag). #26 rend les boutons quoi qu'il arrive ; seule l'injection consulte le gate. Kept AppKit-free (testable sans toucher la TCC). (Épopée #22, ADR-0009.)
+
+## 0.1.20
+
+- #27 **Injection ciblée** de la frappe depuis l'Island (ADR-0009) : un clic sur une option injecte sa frappe (`optionIndex+1` + Entrée en `CGEvent`) dans le terminal Ghostty de **cette** Session **uniquement** si la garde d'unicité (`GhosttyWindowTargeting` : exactement une fenêtre dont l'`AXDocument` = `Session.cwd`) est certaine — sinon dégrade proprement en Click-to-focus, jamais de frappe dans le mauvais terminal (US4). Retour visuel optimiste (`resumeAfterAnswer` : Session « en cours », option envoyée, Liseré éteint via l'Acquittement existant, US11) ; sans clic, aucune décision (US7). Les APIs réelles (AX/`CGEvent`) vivent dans le seul seam `TerminalResponder.live`, exercé uniquement par la FP HITL sur `island.app` (jamais l'instance vivante — spike #25). (Épopée #22.)
+
+## 0.1.19
+
+- #26 **Extraction des options d'`AskUserQuestion`** et boutons dans la carte Étendue : `TranscriptReader.pendingQuestion` lit défensivement le dernier `tool_use` `AskUserQuestion` non répondu du transcript (format figé par le spike #25 : `input.questions[]`, `options[]` ordonnées, l'index = la touche 1/2/3), porté par `.waitingForUser` jusqu'à `Session.pendingQuestion` ; la carte affiche le libellé + un bouton par option. Dégrade (pas de boutons) sur permission/texte libre, N>1 questions, options vides ou question déjà répondue (US10). Le bloc question évince le Résumé du tour. (Épopée #22.)
+
 ## 0.1.18
 
 - #43 Panneau Étendu **défilable** et **plafonné** à ~1/4 de la hauteur d'écran : `SessionCardsView` enveloppe sa liste dans une `ScrollView(.vertical)` (scrollers macOS standards, pas d'indicateur permanent) et borne sa hauteur via la fonction pure `SessionCardsView.cappedHeight(contentHeight:screenHeight:)` = `min(contenu, 0,25 × NSScreen.frame.height)` — bien sous la borne vendorée demi-écran (non patchée). Sous le plafond : hauteur intrinsèque mesurée par `GeometryReader` (pas d'espace vide à 1–2 Sessions) ; au-delà : le surplus défile, toutes les cartes atteignables. Le défilement ne rend jamais le panneau actif (`.nonactivatingPanel` / `FirstMouseHostingView` #33 préservés). (Épopée #46.)
