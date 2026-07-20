@@ -31,7 +31,10 @@ Serveur HTTP embarqué dans l'app, sur 127.0.0.1, seul point d'entrée des Évé
 _Avoid_ : compact, micro-barre
 
 **Étendu** :
-Mode de l'Island après Révélation : une carte par Session (projet, dernier prompt, Résumé, badges, quotas). Se replie (retour à Masqué) quand le curseur quitte le panneau (petit délai de grâce anti-clignotement).
+Mode de l'Island après Révélation : une carte par Session (projet, dernier prompt, Résumé, badges, quotas), triées par **Priorité d'état**. Se replie (retour à Masqué) quand le curseur quitte le panneau (petit délai de grâce anti-clignotement).
+
+**Priorité d'état** :
+Ordre de « pressant » des états d'une Session : **waiting > terminé > working > idle**. Critère unique partagé par l'Icône animée, le Liseré, le Peek et la liste Étendue (source unique `SessionState.priorityRank`, jamais recopié). Dans la liste Étendue, départage à rang égal par récence *par groupe* : `waiting` = plus ancien d'abord (anti-oubli), `terminé`/`working`/`idle` = plus frais d'abord ; ordre déterministe (départage final par id) donc pas de sautillement au rafraîchissement.
 
 **Révélation** :
 Geste qui sort l'Island de l'état Masqué à la demande : pousser le curseur contre le bord haut de l'écran (« bord franc »), dans une bande centrée ~280 pt près de la webcam. Ne se déclenche que s'il existe ≥1 Session, à tout moment (repos comme attente), plein écran compris. N'acquitte rien.
@@ -45,7 +48,7 @@ _Avoid_ : toast, popup
 Mascotte pixel-art animée représentant une Session, affichée dans le Peek et les cartes (Étendu) ; son animation encode l'état (travaille, dort, fini, question).
 
 **Icône animée** :
-Mascotte pixel-art unique dans la barre des menus (à droite, `NSStatusItem` — macOS ne permet pas le centre), reflétant l'état agrégé le plus pressant sur toutes les Sessions : waiting > terminé > working > idle. Idle (zéro Session ou tout acquitté) = mascotte qui dort. Affichage optionnel (réglage Island).
+Mascotte pixel-art unique dans la barre des menus (à droite, `NSStatusItem` — macOS ne permet pas le centre), reflétant l'état agrégé le plus pressant sur toutes les Sessions selon la **Priorité d'état** (waiting > terminé > working > idle), les waiting/terminé n'y pesant que tant qu'ils ne sont pas Acquittés. Idle (zéro Session ou tout acquitté) = mascotte qui dort. Affichage optionnel (réglage Island).
 
 **Liseré** :
 Contour lumineux dessiné sur les bords de l'écran tant qu'un Événement marquant n'est pas Acquitté. Orange : une Session attend une réponse. Vert : une Session a terminé.

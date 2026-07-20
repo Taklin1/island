@@ -33,16 +33,16 @@ public enum SpriteAnimation: String, CaseIterable, Sendable {
     /// mascot. No Session, or everything acknowledged, lets the mascot sleep.
     /// One mascot only — never a per-Session badge or count.
     public static func menuBarMascot(for sessions: [Session]) -> SpriteAnimation {
-        let winning: SessionState
-        if sessions.contains(where: { $0.state == .waiting && $0.needsAcknowledgement }) {
-            winning = .waiting
-        } else if sessions.contains(where: { $0.state == .ended && $0.needsAcknowledgement }) {
-            winning = .ended
-        } else if sessions.contains(where: { $0.state == .running }) {
-            winning = .running
-        } else {
-            winning = .idle
+        // Only *unacknowledged* waiting/ended still press; running/idle always
+        // count. Among what presses, the most pressing state wins by the shared
+        // Priorité d'état rank (issue #44) — no re-encoding of the order here.
+        let pressing = sessions.filter { session in
+            switch session.state {
+            case .waiting, .ended: session.needsAcknowledgement
+            case .running, .idle: true
+            }
         }
+        let winning = pressing.map(\.state).min { $0.priorityRank < $1.priorityRank } ?? .idle
         return animation(for: winning)
     }
 }
