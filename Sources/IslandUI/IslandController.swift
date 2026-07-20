@@ -41,6 +41,15 @@ public final class IslandController {
     /// Click-to-focus (issue #10): brings the Session's terminal frontmost.
     /// Injected so the UI never depends on a concrete terminal module.
     private let focusTerminal: ((String?) -> Void)?
+    /// Answer-by-injection (issue #27): given a Session's cwd and the chosen
+    /// AskUserQuestion option index, targets that Session's Ghostty window and
+    /// injects the keystroke **only** if the target is certain, returning
+    /// whether it did. `false` means it injected nothing (uncertain target, no
+    /// Accessibility permission) and the controller degrades to Click-to-focus.
+    /// Injected as a plain closure so the UI never imports the Focus/AX module,
+    /// and so the real injection — proven only on the packaged app (spike #25) —
+    /// stays entirely outside the controller.
+    private let injectAnswer: ((_ cwd: String?, _ optionIndex: Int) -> Bool)?
     /// Re-reads Session titles on Extended open (issue #32). Injected so the UI
     /// never learns where titles come from (a `/rename` on an idle/ended Session
     /// fires no hook; hovering must still show the new title). ADR-0004: the
@@ -84,14 +93,19 @@ public final class IslandController {
         store: SessionStore,
         quotaStore: QuotaStore = QuotaStore(),
         focusTerminal: ((String?) -> Void)? = nil,
-        refreshTitles: (() -> Void)? = nil
+        refreshTitles: (() -> Void)? = nil,
+        injectAnswer: ((_ cwd: String?, _ optionIndex: Int) -> Bool)? = nil
     ) {
         self.store = store
         self.quotaStore = quotaStore
         self.focusTerminal = focusTerminal
         self.refreshTitles = refreshTitles
+        self.injectAnswer = injectAnswer
         viewModel.activateSession = { [weak self] sessionID in
             self?.cardActivated(sessionID: sessionID)
+        }
+        viewModel.answerOption = { [weak self] sessionID, optionIndex in
+            self?.optionSelected(sessionID: sessionID, optionIndex: optionIndex)
         }
     }
 
@@ -227,6 +241,28 @@ public final class IslandController {
         store.acknowledge(sessionID: sessionID)
         log("card activated: \(sessionID) → focus terminal \(session?.terminal ?? "default")")
         focusTerminal?(session?.terminal)
+    }
+
+    // MARK: - Answer from the Island (issue #27)
+
+    /// An AskUserQuestion option button was tapped: attempt a **safe-targeted**
+    /// injection of that option's keystroke into the Session's terminal, and on
+    /// any doubt degrade to Click-to-focus — never a keystroke in the wrong
+    /// terminal (ADR-0009). Injection is attempted only while the Session is
+    /// genuinely `.waiting` (a real event may have moved it between render and
+    /// tap). On success the Session resumes `.running` optimistically (US11);
+    /// otherwise the tap behaves exactly like a card tap (acknowledge + focus).
+    func optionSelected(sessionID: String, optionIndex: Int) {
+        let session = store.sessions.first { $0.id == sessionID }
+        let injected = session?.state == .waiting
+            && (injectAnswer?(session?.cwd, optionIndex) ?? false)
+        if injected {
+            log("answer: option \(optionIndex + 1) injected → \(sessionID) « en cours »")
+            store.resumeAfterAnswer(sessionID: sessionID)
+        } else {
+            log("answer: option \(optionIndex + 1) → cible incertaine, dégrade en focus")
+            cardActivated(sessionID: sessionID)
+        }
     }
 
     // MARK: - Quotas (issue #9)
@@ -455,6 +491,19 @@ public final class IslandController {
                 if session.lastSummary != nil {
                     parts += "+summary"
                 }
+                // Pending AskUserQuestion (issue #26): the option count lets the
+                // FP assert extraction + ordering state-first (buttons stay
+                // visual). Only while waiting — matches what the card renders.
+                if session.state == .waiting, let question = session.pendingQuestion {
+                    parts += "+question(\(question.options.count))"
+                }
+                // Buttonless wait that surfaced its ask (issue #29): the escalated
+                // permission (or unextractable question) shows a message, not
+                // buttons. The marker lets the FP assert the surfacing state-first.
+                if session.state == .waiting, session.pendingQuestion == nil,
+                    session.waitingMessage != nil {
+                    parts += "+msg"
+                }
                 return parts
             }
             .joined(separator: " ")
@@ -502,6 +551,9 @@ final class IslandViewModel: ObservableObject {
     @Published var quotaGauges: [QuotaGauge] = []
     /// Click-to-focus: set by the controller, called by card/Peek taps.
     var activateSession: ((String) -> Void)?
+    /// Answer-by-injection (issue #27): set by the controller, called with a
+    /// Session id and the tapped option index when an option button is pressed.
+    var answerOption: ((String, Int) -> Void)?
 }
 
 /// Expanded content: Session cards in Extended mode (hover), Peek text
@@ -587,11 +639,19 @@ struct SessionCardsView: View {
                             .foregroundStyle(.secondary)
                     case .cards:
                         ForEach(model.cards) { card in
-                            SessionCardView(card: card)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    model.activateSession?(card.id)
-                                }
+                            // Click-to-focus (issue #10): tapping the card degrades
+                            // to focus. Tapping an AskUserQuestion option button
+                            // (issue #27) instead attempts a safe-targeted keystroke
+                            // injection, degrading to focus only when uncertain.
+                            SessionCardView(
+                                card: card,
+                                onActivate: { model.activateSession?(card.id) },
+                                onAnswer: { index in model.answerOption?(card.id, index) }
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                model.activateSession?(card.id)
+                            }
                         }
                     }
                 }
@@ -620,6 +680,12 @@ struct SessionCardsView: View {
 
 struct SessionCardView: View {
     let card: SessionCard
+    /// Click-to-focus (issue #10): tapping the card degrades to focus.
+    let onActivate: () -> Void
+    /// Answer-by-injection (issue #27): tapping option N attempts a safe-targeted
+    /// injection of that option, degrading to focus only when the target is
+    /// uncertain — the controller decides, the view only reports the tap.
+    let onAnswer: (Int) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -675,14 +741,24 @@ struct SessionCardView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            if let summary = card.summaryText {
+            // When a structured question is present (#26), IT is the card's
+            // presentation: the finished-turn prose would be redundant, so the
+            // summary block cedes to the question below. Exclusive by
+            // construction — never rely on lastSummary happening to be nil on
+            // the AskUserQuestion path (a future waiting source could break it).
+            if card.question == nil, let summary = card.summaryText {
                 Text(summary)
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.9))
                     .lineLimit(6)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let facts = card.summaryFacts {
+            // Same exclusivity as the summary text above: the turn facts belong
+            // to a finished turn, not to a card blocked on a structured question
+            // (#26), so they cede to the question too — and `summaryFacts` can be
+            // non-nil even when `summaryText` is nil (facts without prose), so the
+            // guard is on the question, not on the text being present.
+            if card.question == nil, let facts = card.summaryFacts {
                 Text(facts)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
@@ -693,6 +769,57 @@ struct SessionCardView: View {
                 Text(context)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
+            }
+            // Buttonless wait (issue #29): an escalated permission prompt (or an
+            // unextractable question, US10) carries no options to inject, so the
+            // card shows the block's ask — WHAT is waiting — instead of buttons.
+            // Display only: the tap degrades to Click-to-focus like any card, and
+            // nothing is ever injected or auto-selected (US7). Mutually exclusive
+            // with the question block below (set only when card.question is nil).
+            if let waitingMessage = card.waitingMessage {
+                Text(waitingMessage)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.95))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
+            }
+            // AskUserQuestion (issue #26): the question label + one button per
+            // option, in transcript order (the number is the 1/2/3 key mapping).
+            // Tapping a button attempts a safe-targeted injection of that option
+            // (issue #27); merely showing the buttons never clears the Liseré.
+            if let question = card.question {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(question.prompt)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.95))
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(Array(question.options.enumerated()), id: \.offset) { index, option in
+                        HStack(spacing: 6) {
+                            Text("\(index + 1)")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundStyle(.orange)
+                                .frame(minWidth: 12, alignment: .center)
+                            Text(option.label)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(.white.opacity(0.12))
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture { onAnswer(index) }
+                    }
+                }
+                .padding(.top, 2)
             }
         }
         .padding(.vertical, 6)

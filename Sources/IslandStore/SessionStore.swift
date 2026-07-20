@@ -37,6 +37,20 @@ public struct Session: Identifiable, Equatable, Sendable {
     /// its turn is not done — and the count feeds the discreet tally on the
     /// Extended card (Q6). Reset to zero when a new turn starts.
     public var activeSubagentCount: Int
+    /// The AskUserQuestion this Session is blocked on (issue #26), extracted
+    /// locally from the transcript. Set only while `.waiting` on an extractable
+    /// question; cleared on any transition away from waiting so an answered
+    /// question is never re-shown. `nil` = no buttons (Click-to-focus, US10).
+    public var pendingQuestion: PendingQuestion?
+    /// The human-readable ask of a *buttonless* block (issue #29): the message
+    /// the blocking Notification carried — e.g. "Claude needs your permission to
+    /// use Bash" for an escalated permission prompt, whose options are not
+    /// extractable (spike #25). Set only while `.waiting` **without** a
+    /// ``pendingQuestion``, so the card can say WHAT is blocking even when it
+    /// shows no buttons; display only, never a decision (US7). Cleared on any
+    /// transition away from waiting, exactly like ``pendingQuestion``. `nil`
+    /// whenever buttons are shown, or the Notification carried no message.
+    public var waitingMessage: String?
 
     /// Human-readable project name: last path component of the cwd.
     public var projectName: String {
@@ -57,7 +71,9 @@ public struct Session: Identifiable, Equatable, Sendable {
         lastSummary: TurnSummary? = nil,
         lastActivityAt: Date = Date(),
         needsAcknowledgement: Bool = false,
-        activeSubagentCount: Int = 0
+        activeSubagentCount: Int = 0,
+        pendingQuestion: PendingQuestion? = nil,
+        waitingMessage: String? = nil
     ) {
         self.id = id
         self.state = state
@@ -72,6 +88,8 @@ public struct Session: Identifiable, Equatable, Sendable {
         self.lastActivityAt = lastActivityAt
         self.needsAcknowledgement = needsAcknowledgement
         self.activeSubagentCount = activeSubagentCount
+        self.pendingQuestion = pendingQuestion
+        self.waitingMessage = waitingMessage
     }
 }
 
@@ -173,10 +191,16 @@ public final class SessionStore: ObservableObject {
             // previous turn's Stop is stale (#48). The next Stop re-reads the
             // live list from `background_tasks`.
             session.activeSubagentCount = 0
+            // A resolved AskUserQuestion never lingers into the next turn (#26);
+            // nor does a buttonless block's ask (#29).
+            session.pendingQuestion = nil
+            session.waitingMessage = nil
         case let .toolStarted(tool):
             session.state = .running
             session.currentTool = tool
             session.needsAcknowledgement = false
+            session.pendingQuestion = nil
+            session.waitingMessage = nil
             if session.turnStartedAt == nil {
                 session.turnStartedAt = timestamp
             }
@@ -195,6 +219,13 @@ public final class SessionStore: ObservableObject {
             session.currentTool = nil
             session.lastSummary = event.summary
             session.activeSubagentCount = liveSubagentCount
+            // A turn ending on a question (#39/ADR-0006) resolves to waiting via
+            // its prose in `lastSummary`, never through a structured
+            // AskUserQuestion tool — so any pending one is cleared here whatever
+            // the resolution branch (#26): the Stop path carries no options.
+            // A buttonless block's ask (#29) does not survive the turn's end.
+            session.pendingQuestion = nil
+            session.waitingMessage = nil
             if awaitsReply {
                 session.state = .waiting
                 session.turnStartedAt = nil
@@ -206,7 +237,7 @@ public final class SessionStore: ObservableObject {
                 session.turnStartedAt = nil
                 session.needsAcknowledgement = true
             }
-        case .waitingForUser:
+        case let .waitingForUser(message):
             // Root cause B (#31): a genuine block moves the Session to waiting
             // from any live state, but never resurrects a turn that already
             // ended — a real permission/question never follows a finished turn,
@@ -214,6 +245,24 @@ public final class SessionStore: ObservableObject {
             if session.state != .ended {
                 session.state = .waiting
                 session.needsAcknowledgement = true
+                // A waiting Session is not running a tool: clear any currentTool
+                // the preceding PreToolUse set, so a stale "outil : …" label
+                // never lingers above the question/message on the card (#70).
+                // Inside the guard on purpose — a stray notification on an ended
+                // turn must still alter nothing (#31 non-regression).
+                session.currentTool = nil
+                // The extracted AskUserQuestion (issue #26) — or nil for a
+                // permission/free-text block — rides the event and is attached
+                // only when we actually enter waiting; showing buttons never
+                // clears the Liseré. A stray notification on an ended turn
+                // attaches nothing.
+                session.pendingQuestion = event.question
+                // A buttonless block (permission prompt, or an unextractable
+                // question — US10) keeps the Notification's human-readable ask
+                // so the card can still say WHAT is waiting (issue #29). When
+                // buttons ARE shown the question label is what the card reads,
+                // so the generic message would be redundant → dropped.
+                session.waitingMessage = event.question == nil ? message : nil
             }
         }
 
@@ -254,6 +303,34 @@ public final class SessionStore: ObservableObject {
     /// Focusing a terminal acknowledges the Sessions it hosts.
     public func acknowledge(terminal: String) {
         acknowledge { $0.terminal == terminal }
+    }
+
+    // MARK: - Answer from the Island (issue #27, US11)
+
+    /// Optimistic feedback after the user answered a waiting Session from the
+    /// Island by injection (issue #27): the Session flips back to `.running`
+    /// immediately, its now-answered ``Session/pendingQuestion`` is cleared, and
+    /// its Liseré goes out — through the **existing** per-Session Acknowledgement
+    /// (`needsAcknowledgement`, the very field click-to-focus clears): answering
+    /// *is* acting on the Session (ADR-0007). The elapsed clock restarts on the
+    /// resumed turn.
+    ///
+    /// This never invents a terminal state: the real confirmation still arrives
+    /// through the hooks (a fresh `promptSubmitted`/`toolStarted` overwrites this
+    /// optimistic `.running`), so the state is never doubled. A no-op unless the
+    /// Session is genuinely `.waiting`, so a stale or late tap can never
+    /// resurrect an ended or already-running Session (US7).
+    public func resumeAfterAnswer(sessionID: String) {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
+            sessions[index].state == .waiting
+        else { return }
+        let timestamp = now()
+        sessions[index].state = .running
+        sessions[index].pendingQuestion = nil
+        sessions[index].waitingMessage = nil
+        sessions[index].needsAcknowledgement = false
+        sessions[index].turnStartedAt = timestamp
+        sessions[index].lastActivityAt = timestamp
     }
 
     /// Clears the flag without ever touching the Session state itself: a

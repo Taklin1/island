@@ -438,6 +438,89 @@ struct ClaudeCodeAdapterTests {
         #expect(event.kind == .waitingForUser(message: "Claude needs your permission to use Bash"))
     }
 
+    @Test("A blocking Notification reads the transcript and attaches the pending AskUserQuestion")
+    func notificationAttachesPendingQuestion() throws {
+        let transcript = FileManager.default.temporaryDirectory
+            .appendingPathComponent("adapter-ask-\(UUID().uuidString).jsonl")
+        try Data("""
+            {"isSidechain":false,"type":"user","message":{"role":"user","content":"Choose"},"uuid":"u-1","timestamp":"2026-07-19T10:00:00.000Z"}
+            {"isSidechain":false,"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"AskUserQuestion","input":{"questions":[{"question":"Which sprite direction?","header":"Sprites","multiSelect":false,"options":[{"label":"Bots","description":"d1"},{"label":"Blobs","description":"d2"}]}]}}]},"uuid":"a-1","timestamp":"2026-07-19T10:00:05.000Z"}
+            """.utf8).write(to: transcript)
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let payload = Data("""
+            {
+              "session_id": "abc123",
+              "transcript_path": "\(transcript.path)",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "Notification",
+              "notification_type": "permission_prompt",
+              "message": "Claude is asking a question"
+            }
+            """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
+        #expect(event.kind == .waitingForUser(message: "Claude is asking a question"))
+        let question = try #require(event.question)
+        #expect(question.prompt == "Which sprite direction?")
+        #expect(question.options.map(\.label) == ["Bots", "Blobs"])
+    }
+
+    @Test("A blocking Notification with no extractable question still notifies, no buttons (US10)")
+    func notificationWithoutQuestionDegrades() throws {
+        // A genuine permission prompt: no readable AskUserQuestion transcript, so
+        // the event flows without a question (the card degrades to Click-to-focus).
+        let fixture = Data("""
+            {
+              "session_id": "abc123",
+              "transcript_path": "/tmp/island-does-not-exist-\(UUID().uuidString).jsonl",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "Notification",
+              "notification_type": "permission_prompt",
+              "message": "Claude needs your permission to use Bash"
+            }
+            """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: fixture))
+        #expect(event.kind == .waitingForUser(message: "Claude needs your permission to use Bash"))
+        #expect(event.question == nil)
+    }
+
+    @Test("An escalated permission with a READABLE transcript surfaces no buttons — degrade is content-driven (#29)")
+    func permissionWithReadableTranscriptDegrades() throws {
+        // A real escalated permission (auto-mode): the transcript is perfectly
+        // readable, but its pending tool_use is the gated tool (Bash), NOT an
+        // AskUserQuestion — spike #25 froze that a permission's options live
+        // nowhere the Island can read. So the block degrades to Click-to-focus
+        // by CONTENT (no options in the tail), not because the file was
+        // unreadable (unlike `notificationWithoutQuestionDegrades`, which forces
+        // nil with a missing file). The Notification's human-readable ask still
+        // rides through, so the store can surface it on the buttonless card (#29).
+        let transcript = FileManager.default.temporaryDirectory
+            .appendingPathComponent("adapter-perm-\(UUID().uuidString).jsonl")
+        try Data("""
+            {"isSidechain":false,"type":"user","message":{"role":"user","content":"Run the tests"},"uuid":"u-1","timestamp":"2026-07-20T10:00:00.000Z"}
+            {"isSidechain":false,"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"swift test"}}]},"uuid":"a-1","timestamp":"2026-07-20T10:00:05.000Z"}
+            """.utf8).write(to: transcript)
+        defer { try? FileManager.default.removeItem(at: transcript) }
+
+        let payload = Data("""
+            {
+              "session_id": "abc123",
+              "transcript_path": "\(transcript.path)",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "Notification",
+              "notification_type": "permission_prompt",
+              "message": "Claude needs your permission to use Bash"
+            }
+            """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
+        #expect(event.kind == .waitingForUser(message: "Claude needs your permission to use Bash"))
+        // Readable transcript, but no AskUserQuestion in it → no buttons (#29).
+        #expect(event.question == nil)
+    }
+
     @Test("Informational notifications (auth_success) never put the Session in waiting")
     func informationalNotificationIsIgnored() {
         let fixture = Data("""

@@ -69,6 +69,38 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
 - **Pourquoi** : fiabilité — un runner délégué inerte bloque le gate ; l'orchestrateur
   a tout ce qu'il faut pour dérouler HP lui-même, la délégation n'est pas un dû.
 
+## Injection de frappe : JAMAIS sur l'instance Ghostty vivante
+
+- **Découverte** : pour tester la faisabilité de l'Injection (epic #22), piloter
+  au clavier l'instance Ghostty **réelle** — `CGEvent` clavier, `Cmd+N`/`Cmd+W`,
+  `AXRaise` + frappe postée — a **fermé TOUTES les fenêtres Ghostty de Loïc**
+  (comptage `AXWindows` passé de 8 à 0), même avec une garde par titre de fenêtre.
+  Les raccourcis synthétiques et l'activation cross-instance ne visent pas la
+  fenêtre attendue : la frappe part dans la mauvaise cible, `Cmd+W` ferme la
+  mauvaise fenêtre.
+- **Bonne méthode** : ne **jamais** poster d'événement clavier/fenêtre synthétique
+  vers l'instance qui héberge les vraies Sessions. La faisabilité se dérisque en
+  deux temps, sans jamais rien poster sur l'instance vivante :
+  1. **Lecture seule** (sûr, aucune permission d'écriture) : `AXIsProcessTrusted()`,
+     puis énumérer `AXWindows` de **toutes** les instances du bundle et lire
+     `AXDocument` (= `file://<cwd>/`) par fenêtre pour le ciblage + la gate
+     d'unicité. Aucun `CGEvent`, aucun `AXRaise`, aucun `activate`.
+  2. **Injection réelle** : seulement sur `island.app` packagé, contre une cible
+     **jetable dédiée**, jamais l'instance de travail. `open -n Ghostty.app` ne
+     fournit **pas** une cible isolée fiable (Ghostty est mono-instance :
+     `-n` déclenche la restauration de fenêtres et l'activation cross-instance
+     ne fronte pas la fenêtre → la frappe fuit ailleurs).
+- **Preuve** (spike #25, 2026-07-19) : `inject_selftest 3488` (activate + `Cmd+N`
+  + frappe + `Cmd+W`) → `ax_target list` : `windows=0` ; Loïc : « toutes les pages
+  Ghostty ont sauté ». À l'inverse, la lecture seule `AXDocument` par fenêtre
+  (gate d'unicité : island=1 → certain, akutia=4/hedgencia=3 → dégrade) a
+  parfaitement fonctionné **sans rien poster**.
+- **Pourquoi** : sécurité — l'instance Ghostty porte le travail réel de Loïc ;
+  un événement clavier/fenêtre mal ciblé détruit ses Sessions sans retour arrière.
+  C'est plus grave que le curseur intrusif de la section précédente : ici on
+  ferme des fenêtres. Règle absolue tant que l'Injection n'est pas exercée par
+  `island.app` sur sa propre cible.
+
 ## Fichiers de config réels : backup + restauration byte-exacte
 
 - **Découverte** : un FP qui exerce l'installeur (#6) ou le tee statusline (#9)

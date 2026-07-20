@@ -36,6 +36,19 @@ struct SessionCard: Identifiable, Equatable {
     /// Sous-agents still running under this Session (issue #48, Q6). Drives the
     /// discreet tally on the card; zero when none run.
     let activeSubagentCount: Int
+    /// The AskUserQuestion the Session is blocked on (issue #26): its label and
+    /// ordered options become the question text + one button per option. Only
+    /// set while the Session is `.waiting` on an extractable question; `nil`
+    /// otherwise — no buttons, the click degrades to Click-to-focus (US10).
+    let question: PendingQuestion?
+    /// The human-readable ask of a *buttonless* wait (issue #29): shown when the
+    /// Session waits with no extractable options — an escalated permission
+    /// prompt ("Claude needs your permission to use Bash") or an unextractable
+    /// question (US10) — so the card still says WHAT is blocking. Display only;
+    /// the click degrades to Click-to-focus, nothing is ever injected (US7).
+    /// `nil` whenever there are buttons, the Session is not waiting, or no
+    /// message rode the block.
+    let waitingMessage: String?
 
     /// French context label of the card's Quotas section, or nil when the
     /// tee never reported a context usage for this Session.
@@ -69,6 +82,14 @@ struct SessionCard: Identifiable, Equatable {
         summaryText = session.lastSummary?.text
         summaryFacts = session.lastSummary.flatMap(Self.factsLine(for:))
         activeSubagentCount = session.activeSubagentCount
+        // Buttons only ever show while waiting on a question; a stale one on a
+        // resumed Session never leaks to the card.
+        question = session.state == .waiting ? session.pendingQuestion : nil
+        // The ask of a buttonless wait (#29): only while waiting AND with no
+        // question — buttons carry their own label, and a stale message on a
+        // resumed Session never leaks.
+        waitingMessage = (session.state == .waiting && session.pendingQuestion == nil)
+            ? session.waitingMessage : nil
     }
 
     /// Builds the facts line from a turn summary; every part is optional and

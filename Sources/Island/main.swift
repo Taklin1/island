@@ -17,6 +17,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = SessionStore()
     private let quotaStore = QuotaStore()
     private let settings = AppSettings()
+    /// Réponse depuis l'Island (issue #28): the Accessibility permission the
+    /// injection of #27 needs, and the non-blocking onboarding to it. The gate
+    /// `AnswerFromIslandGate` (IslandStore) turns the preference + this
+    /// permission into inject-or-degrade; #27 consults it at the option tap.
+    private let accessibility = AccessibilityPermission.live
+    private let onboarding = AccessibilityOnboarding.live
     /// Re-reads Session titles on Extended open (issue #32): remembers each
     /// Session's transcript path from the hooks and re-reads it on hover, so a
     /// `/rename` on an idle/ended Session (no hook fires) still shows up.
@@ -44,8 +50,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let store = store
         let quotaStore = quotaStore
         let titleRefresher = titleRefresher
+        // Réponse depuis l'Island (issue #28): bound as locals (like `store`
+        // above) so the injectAnswer closure never captures `self` — these are
+        // value-type structs, so the copy is cheap and shares the same
+        // UserDefaults.
+        let settings = settings
+        let accessibility = accessibility
+        let onboarding = onboarding
         installHooksOnFirstLaunch()
         installMenuBarIcon()
+        // Réponse depuis l'Island (issue #28): trace the Accessibility
+        // permission at launch so the onboarding FP can observe the branch. The
+        // value can be stale until the app is relaunched after a grant (spike
+        // #25), which is exactly why the trace matters across relaunches.
+        print("island: accessibility permission \(accessibility.isGranted ? "granted" : "absent")")
         Task { @MainActor in
             do {
                 let token = try TokenStore.loadOrCreate()
@@ -83,6 +101,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             if let title = titleRefresher.currentTitle(forSessionID: session.id) {
                                 store.setTitle(title, forSessionID: session.id)
                             }
+                        }
+                    },
+                    // Answer-by-injection (issue #27) gated by the preference +
+                    // Accessibility permission (issue #28, US8/US9). The pure
+                    // `AnswerFromIslandGate` decides: only when the feature is on
+                    // *and* the permission is granted do we attempt the
+                    // safe-targeted keystroke (`TerminalResponder.live`, whose own
+                    // unicity guard still degrades an uncertain target to focus).
+                    // Otherwise we inject nothing (return false → the controller
+                    // degrades to Click-to-focus) and, on the first no-permission
+                    // use, guide to System Settings once — non-blocking, never
+                    // forced (ADR-0009). Real AX/CGEvent is proven only by the HITL
+                    // FP on the packaged app (spike #25).
+                    injectAnswer: { cwd, optionIndex in
+                        switch AnswerFromIslandGate.action(
+                            featureEnabled: settings.answerFromIslandEnabled,
+                            permissionGranted: accessibility.isGranted,
+                            onboardingAlreadyPrompted: settings.answerFromIslandOnboardingPrompted
+                        ) {
+                        case .inject:
+                            return TerminalResponder.live.inject(
+                                optionIndex: optionIndex, forSessionCWD: cwd)
+                        case .displayAndFocus(let guideToSettings):
+                            if guideToSettings {
+                                print("island: accessibility permission absent → guiding to"
+                                    + " System Settings (answer degrades to display + focus;"
+                                    + " relaunch island.app after granting)")
+                                onboarding.guideToSystemSettings()
+                                settings.answerFromIslandOnboardingPrompted = true
+                            }
+                            return false
                         }
                     }
                 )
@@ -325,6 +374,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tee.state = settings.statuslineTeeEnabled ? .on : .off
         menu.addItem(tee)
 
+        let answer = NSMenuItem(
+            title: "Réponse depuis l'Island",
+            action: #selector(toggleAnswerFromIsland(_:)), keyEquivalent: "")
+        answer.target = self
+        answer.state = settings.answerFromIslandEnabled ? .on : .off
+        menu.addItem(answer)
+
         menu.addItem(.separator())
 
         let login = NSMenuItem(
@@ -378,6 +434,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         print("island: preference menuBarIconEnabled=\(settings.menuBarIconEnabled)")
         // Restart (or tear down) the animation to match the new preference.
         startMenuBarAnimation()
+    }
+
+    /// Réponse depuis l'Island (issue #28, US8/US9): flips the preference and,
+    /// when enabling the feature is the first use without the Accessibility
+    /// permission, guides to System Settings once — non-blocking, never forced.
+    /// The feature still degrades to display + focus until the grant; the option
+    /// tap (#27) consults the same `AnswerFromIslandGate` to decide inject vs
+    /// degrade.
+    @objc private func toggleAnswerFromIsland(_ sender: NSMenuItem) {
+        settings.answerFromIslandEnabled.toggle()
+        sender.state = settings.answerFromIslandEnabled ? .on : .off
+        print("island: preference answerFromIslandEnabled=\(settings.answerFromIslandEnabled)")
+
+        let action = AnswerFromIslandGate.action(
+            featureEnabled: settings.answerFromIslandEnabled,
+            permissionGranted: accessibility.isGranted,
+            onboardingAlreadyPrompted: settings.answerFromIslandOnboardingPrompted
+        )
+        if case .displayAndFocus(let guideToSettings) = action, guideToSettings {
+            print("island: accessibility permission absent → guiding to System Settings"
+                + " (Réponse depuis l'Island degrades to display + focus until granted;"
+                + " relaunch island.app after granting)")
+            onboarding.guideToSystemSettings()
+            settings.answerFromIslandOnboardingPrompted = true
+        }
     }
 
     @objc private func toggleLoginItem(_ sender: NSMenuItem) {

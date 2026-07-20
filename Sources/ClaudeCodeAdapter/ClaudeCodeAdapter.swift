@@ -39,6 +39,7 @@ public enum ClaudeCodeAdapter {
 
         let kind: AgentEventKind
         var summary: TurnSummary?
+        var question: PendingQuestion?
         switch payload.hookEventName {
         case "SessionStart":
             kind = .sessionStarted
@@ -95,6 +96,13 @@ public enum ClaudeCodeAdapter {
             guard isWaitingNotification(type: payload.notificationType, message: payload.message)
             else { return nil }
             kind = .waitingForUser(message: payload.message)
+            // ADR-0002 / spike #25: extract the pending AskUserQuestion locally
+            // from the transcript. Best-effort — a permission/free-text block
+            // yields no question and the card degrades to Click-to-focus (US10).
+            if let path = payload.transcriptPath {
+                question = TranscriptReader.pendingQuestion(
+                    ofTranscriptAt: URL(fileURLWithPath: path))
+            }
         default:
             // Any future unhandled hook is deliberately ignored.
             return nil
@@ -108,14 +116,15 @@ public enum ClaudeCodeAdapter {
             TranscriptReader.title(ofTranscriptAt: URL(fileURLWithPath: $0))
         }
 
-        return event(payload, kind: kind, summary: summary, title: title)
+        return event(payload, kind: kind, summary: summary, title: title, question: question)
     }
 
     /// Builds a generic event from a decoded payload, filling in the v1
     /// terminal/agent defaults (ADR-0004).
     private static func event(
         _ payload: HookPayload, kind: AgentEventKind,
-        summary: TurnSummary? = nil, title: String? = nil
+        summary: TurnSummary? = nil, title: String? = nil,
+        question: PendingQuestion? = nil
     ) -> AgentEvent {
         AgentEvent(
             sessionID: payload.sessionID,
@@ -124,7 +133,8 @@ public enum ClaudeCodeAdapter {
             terminal: defaultTerminal,
             agent: agentName,
             summary: summary,
-            title: title
+            title: title,
+            question: question
         )
     }
 
