@@ -13,6 +13,8 @@ struct AppSettings {
     static let hooksInstallAttemptedKey = "hooksInstallAttempted"
     static let statuslineTeeEnabledKey = "statuslineTeeEnabled"
     static let menuBarIconEnabledKey = "menuBarIconEnabled"
+    static let answerFromIslandEnabledKey = "answerFromIslandEnabled"
+    static let answerFromIslandOnboardingPromptedKey = "answerFromIslandOnboardingPrompted"
 
     private let defaults: UserDefaults
 
@@ -30,6 +32,15 @@ struct AppSettings {
             // default. Turned off, the status item falls back to a static
             // neutral icon; the menu stays reachable either way.
             Self.menuBarIconEnabledKey: true,
+            // Réponse depuis l'Island (issue #28): ON by default — it is the
+            // value of the feature (PRD #23 US9 left it open; implementation
+            // settles on on). Turned off, the option buttons still show but a
+            // tap only degrades to display + focus, never injecting.
+            Self.answerFromIslandEnabledKey: true,
+            // Onboarding guidance (issue #28, US8) is shown once: the flag flips
+            // the first time the feature is used without the Accessibility
+            // permission, so System Settings never opens on every attempt.
+            Self.answerFromIslandOnboardingPromptedKey: false,
         ])
     }
 
@@ -56,6 +67,16 @@ struct AppSettings {
     var menuBarIconEnabled: Bool {
         get { defaults.bool(forKey: Self.menuBarIconEnabledKey) }
         nonmutating set { defaults.set(newValue, forKey: Self.menuBarIconEnabledKey) }
+    }
+
+    var answerFromIslandEnabled: Bool {
+        get { defaults.bool(forKey: Self.answerFromIslandEnabledKey) }
+        nonmutating set { defaults.set(newValue, forKey: Self.answerFromIslandEnabledKey) }
+    }
+
+    var answerFromIslandOnboardingPrompted: Bool {
+        get { defaults.bool(forKey: Self.answerFromIslandOnboardingPromptedKey) }
+        nonmutating set { defaults.set(newValue, forKey: Self.answerFromIslandOnboardingPromptedKey) }
     }
 }
 
