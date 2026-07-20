@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.14
+
+- #53 Island flottante masquée par défaut (`.floating`, ADR-0007) : au repos, plus rien à l'écran même quand des Sessions travaillent — l'ancien Compact toujours-visible est abandonné. Machine à 3 états Masqué / Peek / Étendu dans `IslandController`. **Révélation** par geste « bord franc » : un moniteur souris global `NSEvent` (coquille mince) délègue toute la décision à la fonction pure `IslandController.shouldReveal(at:in:sessionCount:)` — curseur plaqué au bord haut ∧ bande centrée ~280 pt (webcam) ∧ ≥1 Session — puis déploie l'Étendu (une carte par Session), maintenu ouvert par le hover `.keepVisible` et refermé au départ du curseur avec un délai de grâce anti-clignotement. Peek transitoire ~2,5 s puis retour Masqué. **Acquittement redéfini** : révéler ou survoler l'Island n'acquitte plus rien (regarder ≠ traiter) ; seuls le clic sur une carte (click-to-focus #10) et le refocus terminal acquittent, une Session à la fois. (Épopée #41.)
+
 ## 0.1.13
 
 - #54 Icône animée dans la barre des menus : l'`NSStatusItem` porte une mascotte pixel-art unique animée sur timer, reflétant l'état agrégé le plus pressant sur toutes les Sessions (waiting > terminé > working > idle, via la fonction pure `SpriteAnimation.menuBarMascot(for:)` qui ne compte que les waiting/ended non acquittées) ; une seule mascotte, jamais de badge ; à vide ou tout acquitté elle dort. Réglage « Afficher l'Icône animée » persisté (ON par défaut) : quand off, repli sur une icône statique neutre, le menu (préférences / réinstaller-hooks / quitter) restant toujours accessible. (Épopée #41, ADR-0007.)
