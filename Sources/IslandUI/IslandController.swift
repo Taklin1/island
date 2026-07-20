@@ -273,10 +273,13 @@ public final class IslandController {
                 if let tool = session.currentTool {
                     parts += "(\(tool))"
                 }
-                // Active subagents (#31): a Session with one is never terminée —
-                // surfaced here so agentic tests can assert it from stdout.
+                // Live Sous-agents (#48), read from the Stop's background_tasks:
+                // a Session with one is never terminée. Surfaced on stdout so the
+                // agentic FP can assert the count was parsed (state=running +
+                // ×Nsub proves the gate engaged), the production trace of the
+                // decoded count — distinct from any capture instrumentation.
                 if session.activeSubagentCount > 0 {
-                    parts += "×\(session.activeSubagentCount)sub"
+                    parts += " ×\(session.activeSubagentCount)sub"
                 }
                 if session.lastSummary != nil {
                     parts += "+summary"
@@ -449,6 +452,14 @@ struct SessionCardView: View {
                 Text("outil : \(tool)")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.orange)
+                    .lineLimit(1)
+            }
+            // Discreet Sous-agent tally (issue #48, Q6): "⋯ N sous-agents en
+            // cours" — shown only while at least one runs.
+            if let subagents = card.subagentsLabel {
+                Text("⋯ \(subagents)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             if let summary = card.summaryText {

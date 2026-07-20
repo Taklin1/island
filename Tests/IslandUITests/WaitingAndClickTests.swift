@@ -39,7 +39,7 @@ struct WaitingAndClickTests {
             terminal: "ghostty", agent: "claude-code"
         ))
         store.apply(AgentEvent(
-            sessionID: "done", kind: .turnEnded(awaitsReply: false),
+            sessionID: "done", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0),
             terminal: "ghostty", agent: "claude-code"
         ))
         var focused: [String?] = []
