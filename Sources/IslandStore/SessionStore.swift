@@ -37,6 +37,11 @@ public struct Session: Identifiable, Equatable, Sendable {
     /// its turn is not done — and the count feeds the discreet tally on the
     /// Extended card (Q6). Reset to zero when a new turn starts.
     public var activeSubagentCount: Int
+    /// The AskUserQuestion this Session is blocked on (issue #26), extracted
+    /// locally from the transcript. Set only while `.waiting` on an extractable
+    /// question; cleared on any transition away from waiting so an answered
+    /// question is never re-shown. `nil` = no buttons (Click-to-focus, US10).
+    public var pendingQuestion: PendingQuestion?
 
     /// Human-readable project name: last path component of the cwd.
     public var projectName: String {
@@ -57,7 +62,8 @@ public struct Session: Identifiable, Equatable, Sendable {
         lastSummary: TurnSummary? = nil,
         lastActivityAt: Date = Date(),
         needsAcknowledgement: Bool = false,
-        activeSubagentCount: Int = 0
+        activeSubagentCount: Int = 0,
+        pendingQuestion: PendingQuestion? = nil
     ) {
         self.id = id
         self.state = state
@@ -72,6 +78,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         self.lastActivityAt = lastActivityAt
         self.needsAcknowledgement = needsAcknowledgement
         self.activeSubagentCount = activeSubagentCount
+        self.pendingQuestion = pendingQuestion
     }
 }
 
@@ -173,10 +180,13 @@ public final class SessionStore: ObservableObject {
             // previous turn's Stop is stale (#48). The next Stop re-reads the
             // live list from `background_tasks`.
             session.activeSubagentCount = 0
+            // A resolved AskUserQuestion never lingers into the next turn (#26).
+            session.pendingQuestion = nil
         case let .toolStarted(tool):
             session.state = .running
             session.currentTool = tool
             session.needsAcknowledgement = false
+            session.pendingQuestion = nil
             if session.turnStartedAt == nil {
                 session.turnStartedAt = timestamp
             }
@@ -195,6 +205,11 @@ public final class SessionStore: ObservableObject {
             session.currentTool = nil
             session.lastSummary = event.summary
             session.activeSubagentCount = liveSubagentCount
+            // A turn ending on a question (#39/ADR-0006) resolves to waiting via
+            // its prose in `lastSummary`, never through a structured
+            // AskUserQuestion tool — so any pending one is cleared here whatever
+            // the resolution branch (#26): the Stop path carries no options.
+            session.pendingQuestion = nil
             if awaitsReply {
                 session.state = .waiting
                 session.turnStartedAt = nil
@@ -214,6 +229,12 @@ public final class SessionStore: ObservableObject {
             if session.state != .ended {
                 session.state = .waiting
                 session.needsAcknowledgement = true
+                // The extracted AskUserQuestion (issue #26) — or nil for a
+                // permission/free-text block — rides the event and is attached
+                // only when we actually enter waiting; showing buttons never
+                // clears the Liseré. A stray notification on an ended turn
+                // attaches nothing.
+                session.pendingQuestion = event.question
             }
         }
 

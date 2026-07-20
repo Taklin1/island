@@ -55,6 +55,11 @@ public struct AgentEvent: Equatable, Sendable {
     /// adapter could not read one on this event — the store then keeps the last
     /// known title, and the UI falls back to the project folder name.
     public let title: String?
+    /// The AskUserQuestion the Session is blocked on, extracted locally by the
+    /// adapter (issue #26, spike #25). Only meaningful on `.waitingForUser`;
+    /// `nil` for a permission/free-text block or an unextractable turn — the
+    /// card then shows no buttons and degrades to Click-to-focus (US10).
+    public let question: PendingQuestion?
 
     public init(
         sessionID: String,
@@ -63,7 +68,8 @@ public struct AgentEvent: Equatable, Sendable {
         terminal: String? = nil,
         agent: String,
         summary: TurnSummary? = nil,
-        title: String? = nil
+        title: String? = nil,
+        question: PendingQuestion? = nil
     ) {
         self.sessionID = sessionID
         self.kind = kind
@@ -72,6 +78,7 @@ public struct AgentEvent: Equatable, Sendable {
         self.agent = agent
         self.summary = summary
         self.title = title
+        self.question = question
     }
 }
 

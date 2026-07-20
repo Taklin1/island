@@ -36,6 +36,11 @@ struct SessionCard: Identifiable, Equatable {
     /// Sous-agents still running under this Session (issue #48, Q6). Drives the
     /// discreet tally on the card; zero when none run.
     let activeSubagentCount: Int
+    /// The AskUserQuestion the Session is blocked on (issue #26): its label and
+    /// ordered options become the question text + one button per option. Only
+    /// set while the Session is `.waiting` on an extractable question; `nil`
+    /// otherwise — no buttons, the click degrades to Click-to-focus (US10).
+    let question: PendingQuestion?
 
     /// French context label of the card's Quotas section, or nil when the
     /// tee never reported a context usage for this Session.
@@ -69,6 +74,9 @@ struct SessionCard: Identifiable, Equatable {
         summaryText = session.lastSummary?.text
         summaryFacts = session.lastSummary.flatMap(Self.factsLine(for:))
         activeSubagentCount = session.activeSubagentCount
+        // Buttons only ever show while waiting on a question; a stale one on a
+        // resumed Session never leaks to the card.
+        question = session.state == .waiting ? session.pendingQuestion : nil
     }
 
     /// Builds the facts line from a turn summary; every part is optional and

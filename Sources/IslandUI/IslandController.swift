@@ -455,6 +455,12 @@ public final class IslandController {
                 if session.lastSummary != nil {
                     parts += "+summary"
                 }
+                // Pending AskUserQuestion (issue #26): the option count lets the
+                // FP assert extraction + ordering state-first (buttons stay
+                // visual). Only while waiting — matches what the card renders.
+                if session.state == .waiting, let question = session.pendingQuestion {
+                    parts += "+question(\(question.options.count))"
+                }
                 return parts
             }
             .joined(separator: " ")
@@ -557,11 +563,16 @@ struct SessionCardsView: View {
                         .foregroundStyle(.secondary)
                 }
                 ForEach(model.cards) { card in
-                    SessionCardView(card: card)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            model.activateSession?(card.id)
-                        }
+                    // Click-to-focus (issue #10): tapping the card *or* one of
+                    // its AskUserQuestion option buttons (issue #26) degrades to
+                    // focus — nothing is injected here (injection is #27).
+                    SessionCardView(card: card) {
+                        model.activateSession?(card.id)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        model.activateSession?(card.id)
+                    }
                 }
                 // Quotas (issue #9): global gauges at the foot of the panel,
                 // only when the statusline reported rate limits. In v1 they
@@ -594,6 +605,9 @@ struct SessionCardsView: View {
 
 struct SessionCardView: View {
     let card: SessionCard
+    /// Click-to-focus (issue #10): tapping the card *or* an option button
+    /// degrades to focus — #26 injects nothing (injection is #27).
+    let onActivate: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -649,14 +663,24 @@ struct SessionCardView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            if let summary = card.summaryText {
+            // When a structured question is present (#26), IT is the card's
+            // presentation: the finished-turn prose would be redundant, so the
+            // summary block cedes to the question below. Exclusive by
+            // construction — never rely on lastSummary happening to be nil on
+            // the AskUserQuestion path (a future waiting source could break it).
+            if card.question == nil, let summary = card.summaryText {
                 Text(summary)
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.9))
                     .lineLimit(6)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let facts = card.summaryFacts {
+            // Same exclusivity as the summary text above: the turn facts belong
+            // to a finished turn, not to a card blocked on a structured question
+            // (#26), so they cede to the question too — and `summaryFacts` can be
+            // non-nil even when `summaryText` is nil (facts without prose), so the
+            // guard is on the question, not on the text being present.
+            if card.question == nil, let facts = card.summaryFacts {
                 Text(facts)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
@@ -667,6 +691,43 @@ struct SessionCardView: View {
                 Text(context)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
+            }
+            // AskUserQuestion (issue #26): the question label + one button per
+            // option, in transcript order (the number is the 1/2/3 key mapping
+            // prepared for #27). A tap only degrades to Click-to-focus — nothing
+            // is injected here, and showing buttons never clears the Liseré.
+            if let question = card.question {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(question.prompt)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.95))
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(Array(question.options.enumerated()), id: \.offset) { index, option in
+                        HStack(spacing: 6) {
+                            Text("\(index + 1)")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundStyle(.orange)
+                                .frame(minWidth: 12, alignment: .center)
+                            Text(option.label)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(.white.opacity(0.12))
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture { onActivate() }
+                    }
+                }
+                .padding(.top, 2)
             }
         }
         .padding(.vertical, 6)
