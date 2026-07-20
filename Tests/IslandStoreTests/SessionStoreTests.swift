@@ -516,4 +516,50 @@ struct SessionStoreTests {
         apply(.turnEnded(awaitsReply: false, liveSubagentCount: 0))
         #expect(store.sessions[0].state == .ended)
     }
+
+    // MARK: - Answer from the Island (issue #27, US11)
+
+    @Test("Answering from the Island resumes a waiting Session to 'en cours' optimistically")
+    func resumeAfterAnswerFlipsWaitingToRunning() {
+        var currentDate = Date(timeIntervalSince1970: 1_000_000)
+        let store = SessionStore(now: { currentDate }, sweepInterval: nil)
+        let question = PendingQuestion(prompt: "Postgres or SQLite?", options: [
+            .init(label: "Postgres"), .init(label: "SQLite")])
+        store.apply(AgentEvent(
+            sessionID: "s", kind: .waitingForUser(message: nil),
+            cwd: "/tmp/demo", terminal: "ghostty", agent: "claude-code", question: question))
+        #expect(store.sessions[0].state == .waiting)
+        #expect(store.sessions[0].needsAcknowledgement)
+        #expect(store.sessions[0].pendingQuestion != nil)
+
+        currentDate = Date(timeIntervalSince1970: 1_000_050)
+        store.resumeAfterAnswer(sessionID: "s")
+
+        let session = store.sessions[0]
+        // Optimistic US11 feedback: back to 'en cours', the answered question
+        // gone, and the Liseré out via the existing Acknowledgement field.
+        #expect(session.state == .running)
+        #expect(session.pendingQuestion == nil)
+        #expect(session.needsAcknowledgement == false)
+        // The resumed turn starts its elapsed clock now.
+        #expect(session.turnStartedAt == Date(timeIntervalSince1970: 1_000_050))
+    }
+
+    @Test("Answering never resurrects a Session that is not waiting (no double state)")
+    func resumeAfterAnswerNoOpUnlessWaiting() {
+        let store = SessionStore(sweepInterval: nil)
+        // An ended Session: a stray/late tap must not turn it back to 'en cours'.
+        store.apply(AgentEvent(
+            sessionID: "done", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0),
+            terminal: "ghostty", agent: "claude-code"))
+        #expect(store.sessions[0].state == .ended)
+
+        store.resumeAfterAnswer(sessionID: "done")
+        #expect(store.sessions[0].state == .ended)
+        #expect(store.sessions[0].needsAcknowledgement) // untouched
+
+        // An unknown Session id is a silent no-op.
+        store.resumeAfterAnswer(sessionID: "ghost")
+        #expect(store.sessions.count == 1)
+    }
 }

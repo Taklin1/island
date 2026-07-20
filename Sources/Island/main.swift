@@ -84,6 +84,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 store.setTitle(title, forSessionID: session.id)
                             }
                         }
+                    },
+                    // Answer-by-injection (issue #27): safe-targeted keystroke
+                    // into the Session's Ghostty window when it is the certain
+                    // target, else degrade to Click-to-focus. Real AX/CGEvent
+                    // lives in `TerminalResponder.live` (proven only by the HITL
+                    // FP on the packaged app — spike #25).
+                    injectAnswer: { cwd, optionIndex in
+                        TerminalResponder.live.inject(optionIndex: optionIndex, forSessionCWD: cwd)
                     }
                 )
                 self.controller = controller
