@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.26
+
+- #91 Détection de mise à jour : verdict pur (`UpdateCheckGate`, comparaison sémantique) sur l'API GitHub Releases via seam `UpdateFetcher` (fixtures réelles capturées), item de menu muté en place (« island vX.Y.Z — à jour » ↔ « ⬆ Mettre à jour vers vY.Z… ») + « Vérifier les mises à jour… », UNE notification macOS par version (persistée) ; un build `-dev` ne propose jamais rien, hors-ligne silencieux, surfaces Sessions intactes ; clic no-op tracé (branché en #92). (Épic #85, PR #97.)
+
 ## 0.1.25
 
 - #89 Canal d'installation : `scripts/install.sh`, one-liner `curl … | sh` qui installe/met à jour island depuis la dernière GitHub Release (asset `island.zip` en URL directe, sans quarantaine ni Gatekeeper, remplacement à chaud sans double process, idempotent — c'est aussi le futur updater). FP prouvé sur le vrai canal, repo passé en public (prérequis ADR-0010). (Épic #85, PR #96.)
