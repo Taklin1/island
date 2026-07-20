@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.24
+
+- #88 Version embarquée : builds locaux packagés en `X.Y.Z-dev` (`--release` pour la version nue, futur usage CI), trace `island: version …` au lancement et version affichée en tête du menu de la barre des menus ; repli `0.0.0-dev` pour le binaire SwiftPM nu — socle de la garde « un build `-dev` ne se met jamais à jour » (ADR-0010, épic #85, PR #95).
+
 ## 0.1.23
 
 - #70 Une Session « en attente » n'expose plus d'outil en cours : le cas `.waitingForUser` de `SessionStore.apply` remet `session.currentTool = nil` à l'entrée **effective** en attente (dans la garde `state != .ended`, non-régression #31), supprimant le libellé « outil : … » fantôme qui restait au-dessus de la question/message quand un `PreToolUse` précédait la `Notification`. Vaut pour les questions comme pour les permissions. (Épopée #22.)
