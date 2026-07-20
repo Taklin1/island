@@ -43,3 +43,45 @@ La vérification HITL de la v0.1.23 a montré qu'**aucun bouton ne s'affichait j
 - **Chemin transcript supprimé sans fallback** : il ne peut par construction rien récupérer pendant l'attente. Les gardes défensives (une seule question, options non vides, trim) ont **migré** sur le décodage du payload.
 - **Nouvelle garde `multiSelect`** : `multiSelect == true` → **dégrade** (pas de boutons) — un sélecteur multiple n'est pas un menu à une touche, un index injecté n'y répondrait pas. `nil`/`false` → OK.
 - **Périmètre inchangé** : les permissions restent affichage seul (Résolution #29) — leur `PreToolUse` est celui de l'outil gaté, sans `questions[]`, donc aucun stash et aucune promotion : la dégradation reste pilotée par le contenu.
+
+## Résolution #81 — livraison vérifiée au pid, comportement onglets acté (2026-07-20)
+
+Le gate HITL de #77 a montré que la frappe injectée **n'arrivait jamais** au terminal
+alors que `inject` rendait `true` (« en cours » menteur). Deux causes actées, une
+capture versionnée (`docs/spikes/81-capture-ax-fenetres-onglets-ghostty.md`).
+
+- **Cause racine de la perte** : le post `.cghidEventTap` suit le **key focus
+  global**, que le clic sur le panneau island (NSPanel non-activant) peut retenir
+  sans activer l'app — la frappe mourait dans le panneau ; `app.activate()` n'est
+  pas synchrone et **aucune API ne permet de vérifier** « le key focus est revenu
+  au terminal ». Le routage global est donc remplacé, pas fiabilisé.
+- **Mécanisme retenu** : après le verdict d'unicité (inchangé), `AXRaise` +
+  `activate`, puis **vérification positive re-lue à l'instant du post** (attente
+  bornée ~10 × 50 ms) : instance Ghostty **active**, sa fenêtre-clé (`AXFocusedWindow`,
+  l'onglet visible) expose `AXDocument == Session.cwd`, et son titre n'est **pas un
+  chemin nu**. Alors seulement, `CGEvent.postToPid(pid Ghostty)` — la frappe entre
+  dans la file de la seule app vérifiée : **la fuite vers une autre app est impossible
+  par construction** (l'inverse du `.cghidEventTap`, qui livrait « à qui a le focus »).
+  `inject` ne rend `.injected` — et la carte ne passe « en cours » — **que si la
+  frappe a été postée vers cette cible vérifiée** : le feedback est véridique
+  (`.uncertainTarget` / `.deliveryUnverified` → dégrade en Click-to-focus, tracé).
+- **Comportement onglets/Spaces (capture #81)** : `AXWindows` n'expose que le Space
+  courant ; un onglet d'arrière-plan n'a **ni** `AXWindow` propre **ni** `AXTabGroup`
+  — la fenêtre à onglets est UNE `AXWindow` dont `AXDocument`/`AXTitle` suivent
+  l'onglet visible ; une fenêtre non-key peut être illisible. Le verdict « certain »
+  signifie donc « **l'onglet visible est au cwd de la Session** », rien de plus. Deux
+  gardes renforcent « cible certaine ou rien » : **≥ 2 Sessions vivantes au même cwd →
+  dégrade** (l'Island sait ce que l'AX ne voit pas) ; **titre = chemin nu → dégrade**
+  (signature d'un shell sans Session). Un tap pendant la fenêtre de vérification est
+  ignoré (anti double-frappe). **Résiduel acté** : un terminal caché au même cwd
+  qu'une unique Session (shell nu à titre non-chemin, vieille session silencieuse)
+  reste indétectable — le prompt du terminal reste le filet de sécurité.
+- **Répondre « depuis ailleurs »** : cible non visible → verdict incertain → aucune
+  frappe, dégrade en focus **au niveau app** — qui peut fronter une autre fenêtre
+  Ghostty que celle de la Session (constat HITL). Le focus de la bonne *fenêtre*
+  est le périmètre de **#36**, qui réutilisera la même énumération.
+- **Séquence TUI validée** (gate HITL, 2 livraisons réelles) : « N » + Return
+  sélectionne et **soumet** l'option N d'une vraie `AskUserQuestion` ; aucun Return
+  orphelin observé. Preuve : les clics hors-fenêtre tracent `uncertainTarget` sans
+  aucune frappe nulle part ; les clics sur la fenêtre visible livrent — la réponse
+  du mainteneur au point HITL est elle-même arrivée par la chaîne corrigée.

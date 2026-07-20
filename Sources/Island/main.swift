@@ -121,8 +121,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             onboardingAlreadyPrompted: settings.answerFromIslandOnboardingPrompted
                         ) {
                         case .inject:
-                            return TerminalResponder.live.inject(
+                            // #81: delivery is pid-routed and verified at the
+                            // instant of the post; trace the precise outcome so
+                            // the HITL gate can tell "guard refused" from
+                            // "delivery never verified".
+                            let outcome = await TerminalResponder.live.inject(
                                 optionIndex: optionIndex, forSessionCWD: cwd)
+                            print("island: answer delivery \(outcome) (cwd: \(cwd ?? "nil"))")
+                            return outcome == .injected
                         case .displayAndFocus(let guideToSettings):
                             if guideToSettings {
                                 print("island: accessibility permission absent → guiding to"

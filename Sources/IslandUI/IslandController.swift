@@ -41,15 +41,19 @@ public final class IslandController {
     /// Click-to-focus (issue #10): brings the Session's terminal frontmost.
     /// Injected so the UI never depends on a concrete terminal module.
     private let focusTerminal: ((String?) -> Void)?
-    /// Answer-by-injection (issue #27): given a Session's cwd and the chosen
-    /// AskUserQuestion option index, targets that Session's Ghostty window and
-    /// injects the keystroke **only** if the target is certain, returning
-    /// whether it did. `false` means it injected nothing (uncertain target, no
-    /// Accessibility permission) and the controller degrades to Click-to-focus.
+    /// Answer-by-injection (issues #27/#81): given a Session's cwd and the
+    /// chosen AskUserQuestion option index, targets that Session's Ghostty
+    /// window and injects the keystroke **only** if the target is certain and
+    /// its delivery is verified at the instant of the post (#81), returning
+    /// whether the keystroke was actually posted. `false` means nothing was
+    /// posted (uncertain target, no Accessibility permission, unverified
+    /// delivery) and the controller degrades to Click-to-focus — the "en
+    /// cours" feedback is never shown for a keystroke that did not go out.
     /// Injected as a plain closure so the UI never imports the Focus/AX module,
     /// and so the real injection — proven only on the packaged app (spike #25) —
-    /// stays entirely outside the controller.
-    private let injectAnswer: ((_ cwd: String?, _ optionIndex: Int) -> Bool)?
+    /// stays entirely outside the controller. Async because the delivery
+    /// verification awaits the terminal's activation.
+    private let injectAnswer: ((_ cwd: String?, _ optionIndex: Int) async -> Bool)?
     /// Re-reads Session titles on Extended open (issue #32). Injected so the UI
     /// never learns where titles come from (a `/rename` on an idle/ended Session
     /// fires no hook; hovering must still show the new title). ADR-0004: the
@@ -59,6 +63,9 @@ public final class IslandController {
     private var notch: DynamicNotch<ExpandedContentView, EmptyView, EmptyView>?
     private var cancellables: Set<AnyCancellable> = []
     private var knownEndedSessionIDs: Set<String> = []
+    /// Sessions whose answer delivery is currently in flight (#81): guards a
+    /// second tap during the ~500 ms verification await.
+    private var answerInFlight: Set<String> = []
     private var knownWaitingSessionIDs: Set<String> = []
     private var peekTask: Task<Void, Never>?
     /// Anti-flicker grace before the revealed Island recedes to Masqué.
@@ -94,7 +101,7 @@ public final class IslandController {
         quotaStore: QuotaStore = QuotaStore(),
         focusTerminal: ((String?) -> Void)? = nil,
         refreshTitles: (() -> Void)? = nil,
-        injectAnswer: ((_ cwd: String?, _ optionIndex: Int) -> Bool)? = nil
+        injectAnswer: ((_ cwd: String?, _ optionIndex: Int) async -> Bool)? = nil
     ) {
         self.store = store
         self.quotaStore = quotaStore
@@ -105,7 +112,8 @@ public final class IslandController {
             self?.cardActivated(sessionID: sessionID)
         }
         viewModel.answerOption = { [weak self] sessionID, optionIndex in
-            self?.optionSelected(sessionID: sessionID, optionIndex: optionIndex)
+            guard let self else { return }
+            Task { await self.optionSelected(sessionID: sessionID, optionIndex: optionIndex) }
         }
     }
 
@@ -250,17 +258,35 @@ public final class IslandController {
     /// any doubt degrade to Click-to-focus — never a keystroke in the wrong
     /// terminal (ADR-0009). Injection is attempted only while the Session is
     /// genuinely `.waiting` (a real event may have moved it between render and
-    /// tap). On success the Session resumes `.running` optimistically (US11);
-    /// otherwise the tap behaves exactly like a card tap (acknowledge + focus).
-    func optionSelected(sessionID: String, optionIndex: Int) {
+    /// tap). On a **verified** delivery (#81: `injectAnswer` returns true only
+    /// once the keystroke was actually posted to the vetted target) the Session
+    /// resumes `.running`; otherwise the tap behaves exactly like a card tap
+    /// (acknowledge + focus) — the card never lies about an answer going out.
+    func optionSelected(sessionID: String, optionIndex: Int) async {
+        // Re-entrance guard (#81): the delivery verification awaits the
+        // terminal's activation (up to ~500 ms) — an impatient second tap on
+        // the same card during that window must not fire a second keystroke.
+        guard !answerInFlight.contains(sessionID) else { return }
+        answerInFlight.insert(sessionID)
+        defer { answerInFlight.remove(sessionID) }
         let session = store.sessions.first { $0.id == sessionID }
-        let injected = session?.state == .waiting
-            && (injectAnswer?(session?.cwd, optionIndex) ?? false)
+        // Ambiguity guard (#81): the AX enumeration cannot see hidden tabs or
+        // other-Space windows at the same cwd (capture in
+        // docs/spikes/81-…-ghostty.md), but the store *knows* how many live
+        // Sessions share this project — two terminals at one cwd means the
+        // visible tab could be either, so nothing is injected.
+        let cwdIsAmbiguous = session.map { target in
+            store.sessions.filter { $0.cwd == target.cwd }.count > 1
+        } ?? true
+        var injected = false
+        if session?.state == .waiting, !cwdIsAmbiguous, let injectAnswer {
+            injected = await injectAnswer(session?.cwd, optionIndex)
+        }
         if injected {
             log("answer: option \(optionIndex + 1) injected → \(sessionID) « en cours »")
             store.resumeAfterAnswer(sessionID: sessionID)
         } else {
-            log("answer: option \(optionIndex + 1) → cible incertaine, dégrade en focus")
+            log("answer: option \(optionIndex + 1) non injectée → dégrade en focus")
             cardActivated(sessionID: sessionID)
         }
     }

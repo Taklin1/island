@@ -75,5 +75,5 @@ Débloquer une Session « en attente » sans quitter l'Island, en injectant la f
 _Avoid_ : réponse inline, quick reply
 
 **Injection** :
-Envoi d'une frappe clavier au terminal d'une Session via l'API Accessibilité, effectué uniquement quand la fenêtre/onglet de cette Session est identifiée avec certitude.
+Envoi d'une frappe clavier au terminal d'une Session, effectué uniquement quand la fenêtre/onglet de cette Session est identifiée avec certitude ET re-vérifiée à l'instant de l'envoi (fenêtre visible au cwd de la Session, instance active), routé au pid Ghostty (`postToPid`, jamais « l'app focalisée ») — une frappe ne peut ni se perdre dans le panneau ni fuir vers une autre app (ADR-0009 § Résolution #81). La cible n'est vérifiable que si son onglet est VISIBLE : depuis un autre onglet/fenêtre/Space, le clic dégrade en Click-to-focus, sans frappe.
 _Avoid_ : automation, simulation clavier
