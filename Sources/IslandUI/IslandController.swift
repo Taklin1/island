@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import DynamicNotchKit
 import IslandStore
@@ -162,7 +163,7 @@ public final class IslandController {
     }
 
     private func sessionsDidChange(_ sessions: [Session]) {
-        viewModel.cards = sessions.map { self.card(for: $0) }
+        setCards(from: sessions)
         log("sessions: \(Self.sessionsTrace(for: sessions))")
 
         let newlyEnded = sessions.filter {
@@ -175,11 +176,45 @@ public final class IslandController {
         }
         knownWaitingSessionIDs = Set(sessions.filter { $0.state == .waiting }.map(\.id))
 
-        // A blocked agent matters more than a finished one: same priority as
-        // the Liseré.
-        if let session = newlyWaiting.last ?? newlyEnded.last {
+        // A blocked agent matters more than a finished one: the Peek picks the
+        // most pressing newly-marking Session by the shared Priorité d'état.
+        if let session = Self.mostPressingForPeek(newlyWaiting + newlyEnded) {
             peek(for: session)
         }
+    }
+
+    /// Orders the Extended cards by **Priorité d'état** (issue #44): the shared
+    /// ``SessionState/priorityRank`` first (waiting > terminé > working > idle),
+    /// then a per-group recency tie-break on `lastActivityAt` — `waiting` oldest
+    /// first (anti-oubli: what has waited longest is the most urgent), every
+    /// other group freshest first (the latest result on top, the rest below the
+    /// fold). A final `id` tie-break makes the order fully deterministic, so a
+    /// refresh never reshuffles equal cards (no jitter); the reordering itself
+    /// is animated by card `id` in the view.
+    static func sortedByStatePriority(_ sessions: [Session]) -> [Session] {
+        sessions.sorted { lhs, rhs in
+            let lhsRank = lhs.state.priorityRank
+            let rhsRank = rhs.state.priorityRank
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            if lhs.lastActivityAt != rhs.lastActivityAt {
+                // waiting: oldest first (ascending); every other group: freshest
+                // first (descending).
+                return lhs.state == .waiting
+                    ? lhs.lastActivityAt < rhs.lastActivityAt
+                    : lhs.lastActivityAt > rhs.lastActivityAt
+            }
+            return lhs.id < rhs.id
+        }
+    }
+
+    /// The Session a Peek announces among the newly-marking ones: the most
+    /// pressing state present (shared Priorité d'état — waiting outranks terminé)
+    /// and, within that group, the latest to have arrived. `nil` when nothing is
+    /// newly marking. Sources the waiting > terminé order from the shared rank
+    /// instead of hardcoding it.
+    static func mostPressingForPeek(_ sessions: [Session]) -> Session? {
+        guard let topRank = sessions.map(\.state.priorityRank).min() else { return nil }
+        return sessions.last { $0.state.priorityRank == topRank }
     }
 
     // MARK: - Click-to-focus (issue #10)
@@ -203,9 +238,23 @@ public final class IslandController {
         )
     }
 
-    /// Rebuilds the cards without re-tracing the sessions (context refresh).
+    /// Rebuilds the cards without re-tracing the sessions (context refresh),
+    /// keeping the same Priorité d'état order as the main refresh so a context
+    /// update never reshuffles the panel.
     private func refreshCards() {
-        viewModel.cards = store.sessions.map { self.card(for: $0) }
+        setCards(from: store.sessions)
+    }
+
+    /// Publishes the cards in Priorité d'état order (issue #44), animating the
+    /// reordering so a Session changing rank slides into place instead of
+    /// snapping. The order is deterministic (see ``sortedByStatePriority(_:)``),
+    /// so equal cards never reshuffle and the animation only fires on a real
+    /// rank/recency change.
+    private func setCards(from sessions: [Session]) {
+        let cards = Self.sortedByStatePriority(sessions).map { self.card(for: $0) }
+        withAnimation(.default) {
+            viewModel.cards = cards
+        }
     }
 
     private func quotasDidChange(_ quotas: Quotas?) {
@@ -319,10 +368,19 @@ public final class IslandController {
         mode = .expanded
         refreshTitles?()
         viewModel.showCards = true
-        log("\(trigger): \(viewModel.cards.count) session card(s)")
+        log("\(trigger): \(viewModel.cards.count) session card(s) [\(Self.cardsTrace(for: viewModel.cards))]")
         Task { [weak self] in
             await self?.notch?.expand()
         }
+    }
+
+    /// Compact stdout trace of the deployed cards **in Priorité d'état order**
+    /// (issue #44), so an agentic test can assert the ordering state-first when
+    /// the Étendu deploys — the card order has no other observable signal (the
+    /// SwiftUI order is not otherwise reachable, and the sessions trace follows
+    /// store insertion, not the sort).
+    static func cardsTrace(for cards: [SessionCard]) -> String {
+        cards.map { "\($0.project)[\($0.id)]=\($0.stateLabel)" }.joined(separator: " > ")
     }
 
     /// Recede the revealed Island to Masqué after a short anti-flicker grace, so
@@ -463,28 +521,74 @@ struct ExpandedContentView: View {
 struct SessionCardsView: View {
     @ObservedObject var model: IslandViewModel
 
+    /// Fraction of the screen height the Extended list may fill before it starts
+    /// to scroll (#43). Kept well under the vendored half-screen window borne
+    /// (`DynamicNotch` sizes its panel to `screen.frame.height / 2`), so this
+    /// content cap — not the window — is what bounds a crowded list.
+    static let maxHeightFraction: CGFloat = 0.25
+
+    /// The panel height for a given content and screen: hug the content below
+    /// the cap (no empty space with 1–2 Sessions), clamp to ~1/4 of the screen
+    /// above it so the overflow scrolls. Pure, so the arithmetic is pinned by a
+    /// unit test while the scrolling itself is verified visually.
+    static func cappedHeight(contentHeight: CGFloat, screenHeight: CGFloat) -> CGFloat {
+        min(contentHeight, screenHeight * maxHeightFraction)
+    }
+
+    /// Measured intrinsic height of the card list, fed by a background
+    /// `GeometryReader`. Zero until the first layout pass — the panel then stays
+    /// intrinsic so the vendored `.fixedSize()` wrap never collapses it to
+    /// nothing before the first measurement lands.
+    @State private var contentHeight: CGFloat = 0
+
+    /// ~1/4 of the current screen height, mirroring the vendored borne's use of
+    /// `frame` (not `visibleFrame`) on the first screen. Falls back to a sane
+    /// value when no screen is reported.
+    private var screenHeight: CGFloat {
+        NSScreen.screens.first?.frame.height ?? 900
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if model.cards.isEmpty {
-                Text("aucune session")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 8) {
+                if model.cards.isEmpty {
+                    Text("aucune session")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(model.cards) { card in
+                    SessionCardView(card: card)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            model.activateSession?(card.id)
+                        }
+                }
+                // Quotas (issue #9): global gauges at the foot of the panel,
+                // only when the statusline reported rate limits. In v1 they
+                // scroll with the list (#43).
+                if !model.quotaGauges.isEmpty {
+                    QuotaGaugesView(gauges: model.quotaGauges)
+                }
             }
-            ForEach(model.cards) { card in
-                SessionCardView(card: card)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        model.activateSession?(card.id)
-                    }
-            }
-            // Quotas (issue #9): global gauges at the foot of the panel,
-            // only when the statusline reported rate limits.
-            if !model.quotaGauges.isEmpty {
-                QuotaGaugesView(gauges: model.quotaGauges)
-            }
+            .padding(12)
+            .frame(maxWidth: 340)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { contentHeight = proxy.size.height }
+                        .onChange(of: proxy.size.height) { _, newValue in
+                            contentHeight = newValue
+                        }
+                }
+            )
         }
-        .padding(12)
-        .frame(maxWidth: 340)
+        // Hug the content until it would exceed ~1/4 of the screen, then cap and
+        // let the overflow scroll (#43). Standard macOS overlay scrollers — no
+        // permanent indicator. Only the height is constrained: the width keeps
+        // hugging its content up to 340 pt, unchanged.
+        .frame(height: contentHeight == 0
+            ? nil
+            : Self.cappedHeight(contentHeight: contentHeight, screenHeight: screenHeight))
     }
 }
 
