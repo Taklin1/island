@@ -600,34 +600,60 @@ struct SessionCardsView: View {
         NSScreen.screens.first?.frame.height ?? 900
     }
 
+    /// A top-to-bottom block of the Extended panel. The Quotas gauges lead, then
+    /// either the Session cards or the empty placeholder.
+    enum PanelSection: Hashable {
+        case quotas
+        case emptyPlaceholder
+        case cards
+    }
+
+    /// The panel's vertical sections, top to bottom (#69). Quotas lead so the
+    /// gauges are the first thing visible when the panel opens — above the cards,
+    /// not at the foot as before. The cards, or the "aucune session" placeholder
+    /// when there are none, follow. Pure like `cappedHeight`, so the order is
+    /// pinned by a unit test while the rendering is verified visually.
+    static func sections(hasQuotas: Bool, hasCards: Bool) -> [PanelSection] {
+        var sections: [PanelSection] = []
+        if hasQuotas { sections.append(.quotas) }
+        sections.append(hasCards ? .cards : .emptyPlaceholder)
+        return sections
+    }
+
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 8) {
-                if model.cards.isEmpty {
-                    Text("aucune session")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(model.cards) { card in
-                    // Click-to-focus (issue #10): tapping the card degrades to
-                    // focus. Tapping an AskUserQuestion option button (issue #27)
-                    // instead attempts a safe-targeted keystroke injection,
-                    // degrading to focus only when the target is uncertain.
-                    SessionCardView(
-                        card: card,
-                        onActivate: { model.activateSession?(card.id) },
-                        onAnswer: { index in model.answerOption?(card.id, index) }
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        model.activateSession?(card.id)
+                ForEach(
+                    Self.sections(hasQuotas: !model.quotaGauges.isEmpty, hasCards: !model.cards.isEmpty),
+                    id: \.self
+                ) { section in
+                    switch section {
+                    // Quotas (issue #9): global gauges in the lead so they are
+                    // the first thing seen on opening (#69), only when the
+                    // statusline reported rate limits. They scroll with the list.
+                    case .quotas:
+                        QuotaGaugesView(gauges: model.quotaGauges)
+                    case .emptyPlaceholder:
+                        Text("aucune session")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    case .cards:
+                        ForEach(model.cards) { card in
+                            // Click-to-focus (issue #10): tapping the card degrades
+                            // to focus. Tapping an AskUserQuestion option button
+                            // (issue #27) instead attempts a safe-targeted keystroke
+                            // injection, degrading to focus only when uncertain.
+                            SessionCardView(
+                                card: card,
+                                onActivate: { model.activateSession?(card.id) },
+                                onAnswer: { index in model.answerOption?(card.id, index) }
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                model.activateSession?(card.id)
+                            }
+                        }
                     }
-                }
-                // Quotas (issue #9): global gauges at the foot of the panel,
-                // only when the statusline reported rate limits. In v1 they
-                // scroll with the list (#43).
-                if !model.quotaGauges.isEmpty {
-                    QuotaGaugesView(gauges: model.quotaGauges)
                 }
             }
             .padding(12)

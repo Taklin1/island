@@ -112,10 +112,15 @@ Pour CHAQUE PR d'issue (cible = branche epic) :
    ne pas en supposer une. Puis merge : `gh pr merge <PR> --merge`.
 3. **Réconciliation, STRICTEMENT gatée sur le succès du merge** (une seule chaîne `&&`,
    jamais d'étape hors chaîne, pour ne pas pousser un CHANGELOG sur un merge refusé) :
-   `git pull --ff-only` (branche epic) `&&` bump `+0.0.1` (champ de version du projet)
-   `&&` entrée CHANGELOG (style du repo : 1 ligne dense par version, reprise depuis la
-   section « Changelog proposé » du body de PR) `&&` commit `&&` push.
-4. **Conflit de merge** (typiquement `CHANGELOG.md` ou le champ de version) : worktree
+   `git pull --ff-only` (branche epic) `&&` bump `+0.0.1` `&&` entrée CHANGELOG
+   `&&` commit `&&` push. **Le « champ de version » d'island EST le titre de section
+   `## 0.x.y` en tête de `CHANGELOG.md`** — il n'existe AUCUN constant de version dans
+   `Sources/` ni `Package.swift` (ne perds pas de temps à grep `AppVersion` /
+   `CFBundleShortVersion` / `MARKETING_VERSION`). Bump + entrée = **un seul édit de
+   `CHANGELOG.md`** : ajouter une section `## <version bumpée>` (1 ligne dense par issue
+   mergée, style du repo, reprise depuis la section « Changelog proposé » du body de PR),
+   commité seul (vérifié : les réconciliations #41 ne touchent que `CHANGELOG.md`).
+4. **Conflit de merge** (typiquement `CHANGELOG.md`) : worktree
    temporaire, `git merge origin/<branche-epic>`, résolution par UNION des lignes, push,
    re-vérif locale, re-merger. Ne jamais forcer.
 5. **Clôture** : commenter l'issue (lien PR + version) et la fermer explicitement (les
