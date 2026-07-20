@@ -67,6 +67,14 @@ _Avoid_ : nom de session, label
 **Quotas** :
 Jauges d'usage Claude (fenêtres 5 h et 7 jours, % de contexte) reçues via le tee de la statusline.
 
+**Canal d'installation** :
+Le chemin officiel par lequel island s'installe : un script une-ligne exécuté au terminal (`curl … | sh`) qui installe la dernière Release GitHub — jamais un téléchargement navigateur mis en avant (ADR-0010). La Release (zip taggé `vX.Y.Z` sur `main`, fabriqué par la CI) est la forme téléchargeable de la prod ; `main` est sa base de vérité.
+_Avoid_ : .dmg, App Store, download page
+
+**Mise à jour** :
+Remplacement d'island.app installée par la dernière Release, déclenché par un clic explicite de l'utilisateur (item du menu barre des menus « Mettre à jour vers vY.Z… », signalé par une notification macOS unique par version) et exécuté par le même script que le Canal d'installation. Jamais silencieuse, jamais montrée sur les surfaces Sessions (cartes, Peek, Liseré) ; un build de dev local (`-dev`) ne se met jamais à jour.
+_Avoid_ : auto-update silencieux, upgrade
+
 **Click-to-focus** :
 Action de cliquer une carte de Session pour ramener le focus sur son terminal (Ghostty).
 
