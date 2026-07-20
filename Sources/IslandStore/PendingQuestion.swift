@@ -1,13 +1,14 @@
 import Foundation
 
 /// A question the agent is blocked on — an `AskUserQuestion` tool call —
-/// extracted locally from the transcript (ADR-0002, spike #25), never produced
-/// by an LLM call.
+/// parsed locally by the adapter from the tool's own hook payload (ADR-0002,
+/// spike #25, source moved from the transcript to the PreToolUse `tool_input`
+/// by #77), never produced by an LLM call.
 ///
 /// Present on a Session only while it is `.waiting` on an *extractable* single
-/// question. A permission prompt, free text, an answered question, or a
-/// multi-question turn all yield `nil`: the card then shows no buttons and the
-/// click degrades to Click-to-focus (US10).
+/// question. A permission prompt, free text, an answered question, a
+/// multi-select question or a multi-question call all yield `nil`: the card
+/// then shows no buttons and the click degrades to Click-to-focus (US10).
 public struct PendingQuestion: Equatable, Sendable {
     /// The question label shown above the options (the `question` field).
     public let prompt: String

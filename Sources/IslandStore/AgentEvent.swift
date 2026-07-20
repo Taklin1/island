@@ -55,10 +55,14 @@ public struct AgentEvent: Equatable, Sendable {
     /// adapter could not read one on this event — the store then keeps the last
     /// known title, and the UI falls back to the project folder name.
     public let title: String?
-    /// The AskUserQuestion the Session is blocked on, extracted locally by the
-    /// adapter (issue #26, spike #25). Only meaningful on `.waitingForUser`;
-    /// `nil` for a permission/free-text block or an unextractable turn — the
-    /// card then shows no buttons and degrades to Click-to-focus (US10).
+    /// The question the tool call starting with this event will pose, parsed
+    /// by the adapter from the tool's own payload (issue #77, e.g. the
+    /// `tool_input` of a Claude Code `PreToolUse(AskUserQuestion)`). Only
+    /// meaningful on `.toolStarted` — the store stashes it and promotes it
+    /// into `Session.pendingQuestion` when the Session enters waiting. `nil`
+    /// for every other tool, for an unextractable/multi-select question, and
+    /// on `.waitingForUser` (a blocking notification carries no options) —
+    /// the card then shows no buttons and degrades to Click-to-focus (US10).
     public let question: PendingQuestion?
 
     public init(

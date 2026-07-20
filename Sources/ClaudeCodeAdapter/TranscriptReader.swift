@@ -92,89 +92,12 @@ public enum TranscriptReader {
         return summary
     }
 
-    /// Extracts the question the Session is currently blocked on (issue #26):
-    /// the last `AskUserQuestion` tool_use that has **no** matching `tool_result`
-    /// yet — i.e. the one still awaiting the user. Local parse only (ADR-0002),
-    /// the format is the one frozen by spike #25 (`input.questions[]`, each with
-    /// ordered `options[]` of `{label, description}`).
-    ///
-    /// Defensive like the rest of the reader — returns `nil` (the card then
-    /// degrades to Click-to-focus, US10) whenever the pending call is not a
-    /// clean single question with options: an already-answered question, a
-    /// permission/free-text block with no `AskUserQuestion` at all, an empty or
-    /// unreadable `options`, or a turn posing **several** questions (N>1: the
-    /// index→key mapping would be ambiguous, so we never fake buttons).
-    ///
-    /// - Returns: the pending question, or `nil` when none is extractable.
-    public static func pendingQuestion(
-        ofTranscriptAt url: URL,
-        maxTailBytes: Int = defaultMaxTailBytes
-    ) -> PendingQuestion? {
-        guard let lines = tailLines(of: url, maxBytes: maxTailBytes) else { return nil }
-
-        // Walking backwards, a `tool_result` seen *first* means its tool_use is
-        // already answered: track those ids so a resolved question of an earlier
-        // tour is never resurfaced.
-        var answered: Set<String> = []
-
-        for raw in lines.reversed() {
-            guard let line = TranscriptLine(jsonLine: raw) else { continue }
-            guard line.isSidechain != true, line.isMeta != true else { continue }
-
-            switch line.type {
-            case "assistant":
-                for block in (line.message?.content ?? []).reversed() {
-                    guard block.type == "tool_use", block.name == "AskUserQuestion" else { continue }
-                    if let id = block.id, answered.contains(id) { continue }
-                    // The most recent unanswered AskUserQuestion is THE pending
-                    // one: extract it, or degrade — never fall back to an older.
-                    return pendingQuestion(from: block)
-                }
-            case "user":
-                let blocks = line.message?.content ?? []
-                for block in blocks where block.type == "tool_result" {
-                    if let id = block.toolUseID { answered.insert(id) }
-                }
-                // The last real prompt (no tool_result) bounds the turn: nothing
-                // before it can be the pending question.
-                if !blocks.contains(where: { $0.type == "tool_result" }) {
-                    return nil
-                }
-            default:
-                continue
-            }
-        }
-        return nil
-    }
-
-    /// Turns one `AskUserQuestion` tool_use block into a ``PendingQuestion``,
-    /// or `nil` when it is not a clean single question with options.
-    private static func pendingQuestion(
-        from block: TranscriptLine.Block
-    ) -> PendingQuestion? {
-        // N>1 questions in one turn would need a per-question key mapping the
-        // single button row cannot honestly express (spike #25 open point) →
-        // degrade rather than show misleading buttons.
-        guard let questions = block.input?.questions, questions.count == 1,
-            let question = questions.first,
-            let prompt = question.question?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !prompt.isEmpty
-        else { return nil }
-
-        let options: [PendingQuestion.Option] = (question.options ?? []).compactMap { option in
-            guard let label = option.label?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !label.isEmpty
-            else { return nil }
-            let description = option.description?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return PendingQuestion.Option(
-                label: label,
-                description: (description?.isEmpty ?? true) ? nil : description
-            )
-        }
-        // No extractable options (free text, empty/unreadable list) → degrade.
-        guard !options.isEmpty else { return nil }
-        return PendingQuestion(prompt: prompt, options: options)
-    }
+    // No pending-question extraction here (#77): Claude Code only writes the
+    // AskUserQuestion tool_use to the transcript once the question is ANSWERED
+    // (tool_use + tool_result on adjacent lines — capture 2026-07-20), so "the
+    // last tool_use without a tool_result" never exists on disk while the user
+    // is being asked. The question is read from the PreToolUse hook payload
+    // instead (ClaudeCodeAdapter.pendingQuestion(fromHookPayload:)).
 
     /// Extracts the current session title (issue #32) from the transcript.
     ///
@@ -351,27 +274,19 @@ struct TranscriptLine: Decodable {
         let text: String?
         let name: String?
         let input: ToolInput?
-        /// tool_use id — matched against a later `tool_result`'s `tool_use_id`
-        /// so an already-answered AskUserQuestion is never resurfaced (#26).
-        let id: String?
-        /// A `tool_result`'s back-reference to the tool_use it answers.
-        let toolUseID: String?
 
         init(
             type: String? = nil, text: String? = nil, name: String? = nil,
-            input: ToolInput? = nil, id: String? = nil, toolUseID: String? = nil
+            input: ToolInput? = nil
         ) {
             self.type = type
             self.text = text
             self.name = name
             self.input = input
-            self.id = id
-            self.toolUseID = toolUseID
         }
 
         enum CodingKeys: String, CodingKey {
-            case type, text, name, input, id
-            case toolUseID = "tool_use_id"
+            case type, text, name, input
         }
 
         init(from decoder: Decoder) throws {
@@ -380,25 +295,19 @@ struct TranscriptLine: Decodable {
             text = try? container.decode(String.self, forKey: .text)
             name = try? container.decode(String.self, forKey: .name)
             input = try? container.decode(ToolInput.self, forKey: .input)
-            id = try? container.decode(String.self, forKey: .id)
-            toolUseID = try? container.decode(String.self, forKey: .toolUseID)
         }
     }
 
-    /// Subset of tool_use inputs the summary and the pending-question extraction
-    /// care about.
+    /// Subset of tool_use inputs the summary cares about.
     struct ToolInput: Decodable {
         let filePath: String?
         let notebookPath: String?
         let todos: [Todo]?
-        /// AskUserQuestion payload (spike #25): an ordered list of questions.
-        let questions: [Question]?
 
         enum CodingKeys: String, CodingKey {
             case filePath = "file_path"
             case notebookPath = "notebook_path"
             case todos
-            case questions
         }
 
         init(from decoder: Decoder) throws {
@@ -406,27 +315,11 @@ struct TranscriptLine: Decodable {
             filePath = try? container.decode(String.self, forKey: .filePath)
             notebookPath = try? container.decode(String.self, forKey: .notebookPath)
             todos = try? container.decode([Todo].self, forKey: .todos)
-            questions = try? container.decode([Question].self, forKey: .questions)
         }
     }
 
     struct Todo: Decodable {
         let content: String?
         let status: String?
-    }
-
-    /// One AskUserQuestion entry (spike #25): a label, a header, a multi-select
-    /// flag, and ordered options.
-    struct Question: Decodable {
-        let question: String?
-        let header: String?
-        let multiSelect: Bool?
-        let options: [Option]?
-    }
-
-    /// One ordered option of an AskUserQuestion (`{label, description}`).
-    struct Option: Decodable {
-        let label: String?
-        let description: String?
     }
 }

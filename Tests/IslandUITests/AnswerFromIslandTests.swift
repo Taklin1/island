@@ -10,14 +10,19 @@ import IslandStore
 /// pin the controller's decision and the optimistic US11 feedback.
 @MainActor
 struct AnswerFromIslandTests {
-    /// A waiting Session with an extractable question, hosted by ghostty.
+    /// A waiting Session with an extractable question, hosted by ghostty —
+    /// built through the real sequence (#77): the question tool's PreToolUse
+    /// stashes the question, the blocking Notification promotes it.
     private func waitingStore() -> SessionStore {
         let store = SessionStore(sweepInterval: nil)
         let question = PendingQuestion(prompt: "Postgres or SQLite?", options: [
             .init(label: "Postgres"), .init(label: "SQLite")])
         store.apply(AgentEvent(
-            sessionID: "s", kind: .waitingForUser(message: nil),
+            sessionID: "s", kind: .toolStarted(tool: "AskUserQuestion"),
             cwd: "/tmp/demo", terminal: "ghostty", agent: "claude-code", question: question))
+        store.apply(AgentEvent(
+            sessionID: "s", kind: .waitingForUser(message: nil),
+            cwd: "/tmp/demo", terminal: "ghostty", agent: "claude-code"))
         return store
     }
 
