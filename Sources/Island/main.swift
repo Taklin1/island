@@ -30,6 +30,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// shell: it reads the cursor and screen and delegates the decision to the
     /// pure `IslandController.shouldReveal(at:in:sessionCount:)`.
     private var revealMonitor: Any?
+    /// Drives the menu-bar mascot animation (issue #54): each tick re-reads the
+    /// aggregated Session state and redraws the current sprite frame.
+    private var iconTimer: Timer?
+    /// Last mascot animation traced to stdout, so agentic tests can assert the
+    /// aggregated state without inspecting the menu-bar pixels; only prints on
+    /// a change.
+    private var lastMascotTrace: String?
+    /// The bot sprite sheet, decoded once for the menu bar.
+    private lazy var botSheet: CGImage? = SpriteSheet.bot.image(named: "bot")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let store = store
@@ -208,17 +217,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func installMenuBarIcon() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let button = item.button {
-            button.image = NSImage(
-                systemSymbolName: "water.waves",
-                accessibilityDescription: "Island"
-            )
-            button.image?.isTemplate = true
-            if button.image == nil { button.title = "⏺" }
-        }
         item.menu = buildMenu()
         statusItem = item
+        startMenuBarAnimation()
         print("island: menu bar icon installed")
+    }
+
+    /// Icône animée (issue #54): a single pixel-art mascot in the menu bar,
+    /// animating the most pressing aggregated Session state (waiting > terminé >
+    /// working > idle). When the preference is off, the timer stays down and the
+    /// status item shows a static neutral icon — the menu is reachable either
+    /// way. Uses `.common` mode so the frames keep advancing while the menu is
+    /// open.
+    private func startMenuBarAnimation() {
+        iconTimer?.invalidate()
+        iconTimer = nil
+        refreshMenuBarIcon()
+        guard settings.menuBarIconEnabled else { return }
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshMenuBarIcon() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        iconTimer = timer
+    }
+
+    /// Redraws the menu-bar mascot from the live Session state, or the static
+    /// neutral icon when the mascot is disabled (or its sheet is unavailable).
+    private func refreshMenuBarIcon() {
+        guard let button = statusItem?.button else { return }
+        if settings.menuBarIconEnabled {
+            let mascot = SpriteAnimation.menuBarMascot(for: store.sessions)
+            traceMascot(mascot.rawValue)
+            if let image = Self.menuBarImage(for: mascot, sheet: botSheet) {
+                button.image = image
+                button.title = ""
+                return
+            }
+        } else {
+            traceMascot("static")
+        }
+        let neutral = NSImage(systemSymbolName: "water.waves", accessibilityDescription: "Island")
+        neutral?.isTemplate = true
+        button.image = neutral
+        button.title = neutral == nil ? "⏺" : ""
+    }
+
+    private func traceMascot(_ value: String) {
+        guard lastMascotTrace != value else { return }
+        lastMascotTrace = value
+        print("island: menu bar mascot=\(value)")
+    }
+
+    /// Renders the current frame of a mascot animation into a menu-bar-sized
+    /// NSImage (nearest-neighbor, kept in color so the state tints show — not a
+    /// template).
+    private static func menuBarImage(for animation: SpriteAnimation, sheet cg: CGImage?) -> NSImage? {
+        guard let cg else { return nil }
+        let sheet = SpriteSheet.bot
+        let index = sheet.frameIndex(for: animation, elapsed: Date().timeIntervalSinceReferenceDate)
+        guard let frame = cg.cropping(to: sheet.frameRect(for: animation, frame: index)) else { return nil }
+        let side: CGFloat = 18
+        let image = NSImage(size: NSSize(width: side, height: side))
+        image.lockFocus()
+        if let ctx = NSGraphicsContext.current?.cgContext {
+            ctx.interpolationQuality = .none
+            ctx.draw(frame, in: CGRect(x: 0, y: 0, width: side, height: side))
+        }
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
     }
 
     private func buildMenu() -> NSMenu {
@@ -236,6 +303,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sound.target = self
         sound.state = settings.soundEnabled ? .on : .off
         menu.addItem(sound)
+
+        let mascot = NSMenuItem(
+            title: "Afficher l'Icône animée",
+            action: #selector(toggleMenuBarIcon(_:)), keyEquivalent: "")
+        mascot.target = self
+        mascot.state = settings.menuBarIconEnabled ? .on : .off
+        menu.addItem(mascot)
 
         let tee = NSMenuItem(
             title: "Quotas via la statusline",
@@ -289,6 +363,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.soundEnabled.toggle()
         sender.state = settings.soundEnabled ? .on : .off
         print("island: preference soundEnabled=\(settings.soundEnabled)")
+    }
+
+    @objc private func toggleMenuBarIcon(_ sender: NSMenuItem) {
+        settings.menuBarIconEnabled.toggle()
+        sender.state = settings.menuBarIconEnabled ? .on : .off
+        print("island: preference menuBarIconEnabled=\(settings.menuBarIconEnabled)")
+        // Restart (or tear down) the animation to match the new preference.
+        startMenuBarAnimation()
     }
 
     @objc private func toggleLoginItem(_ sender: NSMenuItem) {
