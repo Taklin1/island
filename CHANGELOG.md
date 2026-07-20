@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.25
+
+- #89 Canal d'installation : `scripts/install.sh`, one-liner `curl … | sh` qui installe/met à jour island depuis la dernière GitHub Release (asset `island.zip` en URL directe, sans quarantaine ni Gatekeeper, remplacement à chaud sans double process, idempotent — c'est aussi le futur updater). FP prouvé sur le vrai canal, repo passé en public (prérequis ADR-0010). (Épic #85, PR #96.)
+
 ## 0.1.24
 
 - #88 Version embarquée : builds locaux packagés en `X.Y.Z-dev` (`--release` pour la version nue, futur usage CI), trace `island: version …` au lancement et version affichée en tête du menu de la barre des menus ; repli `0.0.0-dev` pour le binaire SwiftPM nu — socle de la garde « un build `-dev` ne se met jamais à jour » (ADR-0010, épic #85, PR #95).
