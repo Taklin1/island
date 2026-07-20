@@ -33,7 +33,7 @@ struct AnswerFromIslandTests {
         var focused: [String?] = []
         let controller = IslandController(
             store: store,
-            focusTerminal: { focused.append($0) },
+            focusTerminal: { terminal, _ in focused.append(terminal) },
             injectAnswer: { cwd, index in injectCalls.append((cwd, index)); return true })
 
         await controller.optionSelected(sessionID: "s", optionIndex: 1)
@@ -56,7 +56,7 @@ struct AnswerFromIslandTests {
         var focused: [String?] = []
         let controller = IslandController(
             store: store,
-            focusTerminal: { focused.append($0) },
+            focusTerminal: { terminal, _ in focused.append(terminal) },
             injectAnswer: { _, _ in false }) // uncertain / no permission
 
         await controller.optionSelected(sessionID: "s", optionIndex: 0)
@@ -85,7 +85,7 @@ struct AnswerFromIslandTests {
         var focused: [String?] = []
         let controller = IslandController(
             store: store,
-            focusTerminal: { focused.append($0) },
+            focusTerminal: { terminal, _ in focused.append(terminal) },
             injectAnswer: { _, _ in injectCalls += 1; return true })
 
         await controller.optionSelected(sessionID: "s", optionIndex: 0)
@@ -106,7 +106,7 @@ struct AnswerFromIslandTests {
         var release = false
         let controller = IslandController(
             store: store,
-            focusTerminal: { _ in },
+            focusTerminal: { _, _ in },
             injectAnswer: { _, index in
                 injectCalls += 1
                 // Hold the FIRST delivery open (the real verification awaits
@@ -140,7 +140,7 @@ struct AnswerFromIslandTests {
         var focused: [String?] = []
         let controller = IslandController(
             store: store,
-            focusTerminal: { focused.append($0) },
+            focusTerminal: { terminal, _ in focused.append(terminal) },
             injectAnswer: { _, _ in injectCalls += 1; return true })
 
         await controller.optionSelected(sessionID: "run", optionIndex: 0)
@@ -158,7 +158,7 @@ struct AnswerFromIslandTests {
         var injectCalls = 0
         _ = IslandController(
             store: store,
-            focusTerminal: { _ in },
+            focusTerminal: { _, _ in },
             injectAnswer: { _, _ in injectCalls += 1; return true })
 
         // Drive more store activity (another Session appears): the controller

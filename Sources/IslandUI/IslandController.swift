@@ -38,9 +38,12 @@ public final class IslandController {
 
     private let store: SessionStore
     private let quotaStore: QuotaStore
-    /// Click-to-focus (issue #10): brings the Session's terminal frontmost.
-    /// Injected so the UI never depends on a concrete terminal module.
-    private let focusTerminal: ((String?) -> Void)?
+    /// Click-to-focus (issues #10, #36): brings the Session's terminal
+    /// frontmost — given its terminal identifier and its cwd, so the focuser
+    /// can target the Session's exact Ghostty window when it is a certain
+    /// target (and degrade to the whole app otherwise). Injected so the UI
+    /// never depends on a concrete terminal module.
+    private let focusTerminal: ((_ terminal: String?, _ cwd: String?) -> Void)?
     /// Answer-by-injection (issues #27/#81): given a Session's cwd and the
     /// chosen AskUserQuestion option index, targets that Session's Ghostty
     /// window and injects the keystroke **only** if the target is certain and
@@ -99,7 +102,7 @@ public final class IslandController {
     public init(
         store: SessionStore,
         quotaStore: QuotaStore = QuotaStore(),
-        focusTerminal: ((String?) -> Void)? = nil,
+        focusTerminal: ((_ terminal: String?, _ cwd: String?) -> Void)? = nil,
         refreshTitles: (() -> Void)? = nil,
         injectAnswer: ((_ cwd: String?, _ optionIndex: Int) async -> Bool)? = nil
     ) {
@@ -248,7 +251,7 @@ public final class IslandController {
         let session = store.sessions.first { $0.id == sessionID }
         store.acknowledge(sessionID: sessionID)
         log("card activated: \(sessionID) → focus terminal \(session?.terminal ?? "default")")
-        focusTerminal?(session?.terminal)
+        focusTerminal?(session?.terminal, session?.cwd)
     }
 
     // MARK: - Answer from the Island (issue #27)

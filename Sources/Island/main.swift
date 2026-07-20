@@ -67,7 +67,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             do {
                 let token = try TokenStore.loadOrCreate()
+                // Agentic-test seam: `ISLAND_PORT` lets a dedicated test
+                // instance run beside the real app (which holds the fixed
+                // production port). Absent in production → default port.
+                let requestedPort = ProcessInfo.processInfo.environment["ISLAND_PORT"]
+                    .flatMap(UInt16.init) ?? LocalServer.defaultPort
                 let server = LocalServer(
+                    port: requestedPort,
                     token: token,
                     translate: { data in
                         // Remember the transcript path (issue #32) before
@@ -93,7 +99,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let controller = IslandController(
                     store: store,
                     quotaStore: quotaStore,
-                    focusTerminal: { TerminalFocuser.live.focus(terminal: $0) },
+                    // Click-to-focus (issue #36): bring the Session's exact
+                    // Ghostty window frontmost when it is a certain target
+                    // (unicity verdict alone), the whole app otherwise. Window
+                    // targeting needs the Accessibility permission but is
+                    // independent of the injection preference; without it the
+                    // focus stays app-level — immediate, never blocking — and
+                    // the first no-permission trigger (this click or an option
+                    // tap, whichever comes first) guides to System Settings
+                    // once, through the same shared latch.
+                    focusTerminal: { terminal, cwd in
+                        let outcome = TerminalFocuser.live.focus(terminal: terminal, cwd: cwd)
+                        print("island: click-to-focus \(outcome) (cwd: \(cwd ?? "nil"))")
+                        if AccessibilityGuidance.shouldGuide(
+                            permissionGranted: accessibility.isGranted,
+                            alreadyPrompted: settings.answerFromIslandOnboardingPrompted
+                        ) {
+                            print("island: accessibility permission absent → guiding to"
+                                + " System Settings (click-to-focus stays app-level"
+                                + " until granted; relaunch island.app after granting)")
+                            onboarding.guideToSystemSettings()
+                            settings.answerFromIslandOnboardingPrompted = true
+                        }
+                    },
                     // Extended open (issue #32): re-read each Session's title so
                     // a /rename that fired no hook is reflected on hover.
                     refreshTitles: {
