@@ -245,6 +245,12 @@ public final class SessionStore: ObservableObject {
             if session.state != .ended {
                 session.state = .waiting
                 session.needsAcknowledgement = true
+                // A waiting Session is not running a tool: clear any currentTool
+                // the preceding PreToolUse set, so a stale "outil : …" label
+                // never lingers above the question/message on the card (#70).
+                // Inside the guard on purpose — a stray notification on an ended
+                // turn must still alter nothing (#31 non-regression).
+                session.currentTool = nil
                 // The extracted AskUserQuestion (issue #26) — or nil for a
                 // permission/free-text block — rides the event and is attached
                 // only when we actually enter waiting; showing buttons never
