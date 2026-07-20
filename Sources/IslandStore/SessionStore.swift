@@ -239,7 +239,9 @@ public final class SessionStore: ObservableObject {
 
     // MARK: - Acknowledgement (issues #8 / #10)
 
-    /// Hovering the Island acknowledges every pending Session at once.
+    /// Acknowledges every pending Session at once. Since ADR-0007 (issue #53)
+    /// no production path clears the Liseré wholesale — revealing or hovering the
+    /// Island acknowledges nothing (looking ≠ treating). Kept as a bulk helper.
     public func acknowledgeAll() {
         acknowledge { _ in true }
     }

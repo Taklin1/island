@@ -52,8 +52,8 @@ struct WaitingAndClickTests {
         #expect(store.sessions.first(where: { $0.id == "done" })?.needsAcknowledgement == true)
     }
 
-    @Test("Hovering the Island acknowledges every pending Session")
-    func hoverAcknowledgesEverySession() {
+    @Test("Hovering the revealed Island acknowledges no Session (regarder ≠ traiter, #53)")
+    func hoverAcknowledgesNoSession() {
         let store = SessionStore()
         store.apply(AgentEvent(
             sessionID: "blocked", kind: .waitingForUser(message: nil),
@@ -63,7 +63,10 @@ struct WaitingAndClickTests {
 
         controller.hoverDidChange(true)
 
-        #expect(store.sessions[0].needsAcknowledgement == false)
+        // Redefined Acknowledgement (ADR-0007): looking at the Island — revealing
+        // or hovering it — no longer clears the Liseré. Only acting on a Session
+        // (click-to-focus or terminal refocus) acknowledges it, one at a time.
+        #expect(store.sessions[0].needsAcknowledgement == true)
     }
 
     @Test("The Peek announces a waiting Session differently from a finished one")

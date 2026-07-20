@@ -26,6 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var glow: GlowController?
     private var focusAcknowledger: TerminalFocusAcknowledger?
     private var statusItem: NSStatusItem?
+    /// Global mouse monitor for the top-edge Reveal gesture (issue #53). A thin
+    /// shell: it reads the cursor and screen and delegates the decision to the
+    /// pure `IslandController.shouldReveal(at:in:sessionCount:)`.
+    private var revealMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let store = store
@@ -75,6 +79,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
                 self.controller = controller
                 await controller.activate()
+
+                // Reveal gesture (issue #53): a global mouse monitor watches for
+                // the cursor pinned to the top-centre edge and asks the pure
+                // `shouldReveal` whether to deploy the Étendu — a thin shell that
+                // holds no logic of its own. `.mouseMoved` global events are
+                // delivered on the main thread, so we stay MainActor-isolated.
+                self.revealMonitor = NSEvent.addGlobalMonitorForEvents(
+                    matching: .mouseMoved
+                ) { [weak controller] _ in
+                    MainActor.assumeIsolated {
+                        guard let controller, let screen = NSScreen.main else { return }
+                        if IslandController.shouldReveal(
+                            at: NSEvent.mouseLocation,
+                            in: screen.frame,
+                            sessionCount: store.sessions.count
+                        ) {
+                            controller.reveal()
+                        }
+                    }
+                }
 
                 // Liseré (issue #8): reads the preference live on each change.
                 let glow = GlowController(
