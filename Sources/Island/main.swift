@@ -57,6 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settings = settings
         let accessibility = accessibility
         let onboarding = onboarding
+        // Version embarquée (issue #88): trace which build runs (X.Y.Z-dev for
+        // local packaging, bare X.Y.Z for releases, 0.0.0-dev for the bare
+        // SwiftPM binary) so the FP and "which version am I running" (US5)
+        // can read it at launch.
+        print("island: version \(AppVersion.current.value)")
         installHooksOnFirstLaunch()
         installMenuBarIcon()
         // Réponse depuis l'Island (issue #28): trace the Accessibility
@@ -353,6 +358,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
+
+        // Version embarquée (issue #88, US5): the resting menu shows which
+        // build runs. Display-only — no action, and explicitly disabled since
+        // autoenablesItems is off.
+        let version = NSMenuItem(
+            title: "island v\(AppVersion.current.value)", action: nil, keyEquivalent: "")
+        version.isEnabled = false
+        menu.addItem(version)
+
+        menu.addItem(.separator())
 
         let border = NSMenuItem(
             title: "Liseré", action: #selector(toggleBorder(_:)), keyEquivalent: "")
