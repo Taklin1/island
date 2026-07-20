@@ -675,7 +675,12 @@ struct SessionCardView: View {
                     .lineLimit(6)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if let facts = card.summaryFacts {
+            // Same exclusivity as the summary text above: the turn facts belong
+            // to a finished turn, not to a card blocked on a structured question
+            // (#26), so they cede to the question too — and `summaryFacts` can be
+            // non-nil even when `summaryText` is nil (facts without prose), so the
+            // guard is on the question, not on the text being present.
+            if card.question == nil, let facts = card.summaryFacts {
                 Text(facts)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
