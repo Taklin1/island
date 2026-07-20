@@ -18,36 +18,56 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
 - **Pourquoi** : fiabilité — un 401 sur l'auth ressemble à un token périmé et
   fait perdre du temps de diagnostic à chaque session de test.
 
-## Mode Étendu : hover synthétique via CGEvent
+## Mode Étendu : vérifier la Révélation par la TRACE, pas par un screenshot maintenu
 
-- **Découverte** : le mode Étendu ne s'ouvre qu'au survol réel de l'Island ;
-  ni `osascript` (pas de position souris dans System Events) ni `cliclick`
-  (non installé) ne permettent de le déclencher pour un screenshot.
-- **Bonne méthode** : compiler un mini-outil Swift qui poste un `mouseMoved`
-  CGEvent vers le haut-centre de l'écran (l'Island est top-center), attendre
-  ~1,5 s, screenshoter, puis renvoyer le curseur ailleurs :
-  ```swift
-  // mouse_move.swift — usage : ./mouse_move <x> <y>
-  import CoreGraphics
-  import Foundation
-  let args = CommandLine.arguments
-  let point = CGPoint(x: Double(args[1])!, y: Double(args[2])!)
-  CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
-          mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
-  ```
+- **Découverte** (épopée #41, ADR-0007 — PÉRIME l'ancienne méthode « hover
+  synthétique → screenshot de l'Étendu ») : depuis le passage en `.floating`
+  masqué, l'Étendu ne s'ouvre plus au survol d'une barre visible mais par un
+  **moniteur souris global `NSEvent`** (Révélation bord-franc). Le panneau se
+  déploie **autour** du curseur au bord haut ⇒ aucun `mouseEntered` natif ⇒
+  `keepVisible` ne s'arme pas ⇒ l'Étendu **recede en ~300 ms**. Un `mouseMoved`
+  CGEvent posté à un point statique NE maintient PAS `isHovering` assez
+  longtemps pour un `screencapture` : la fenêtre est presque toujours ratée
+  (l'écran capturé montre le bureau, pas le panneau). La trace a aussi été
+  **renommée** : `révélation: N session card(s)` (plus `expanded on hover`).
+- **Bonne méthode** : vérifier la Révélation par la **trace stdout**, pas par un
+  screenshot de l'Étendu maintenu. Compiler un mini-outil Swift qui vise le
+  haut-centre du bord (auto-centré sur `NSScreen.main`, y ≈ bord haut) pour
+  déclencher, puis lire la trace :
   ```bash
-  swiftc -o mouse_move mouse_move.swift
-  ./mouse_move 720 15 && sleep 1.5 && screencapture -x expanded.png
-  ./mouse_move 720 600   # rendre la main
+  # reveal_move.swift : CGEvent mouseMoved vers (NSScreen.main.frame.midX, top)
+  swiftc -o reveal_move reveal_move.swift && ./reveal_move
+  grep "révélation: .* session card" island.log   # preuve que l'Étendu s'est déployé
   ```
-- **Preuve** (FP #11, 2026-07-19) : le déplacement déclenche la trace
-  `island: expanded on hover: N session card(s)` et le screenshot montre les
-  cartes Étendues ; aucune permission Accessibilité demandée pour un simple
-  `mouseMoved`.
-- **Pourquoi** : justesse — sans ce chemin, le rendu Étendu resterait
-  invérifiable en agentique et les FP/HP concluraient « visuel non testé »
-  alors qu'un screenshot suffit. Attention : déplacer la souris pendant que
-  Loïc travaille est intrusif ; le faire vite et remettre le curseur ailleurs.
+  Le **contenu de carte** (titre #32, compte sous-agent #48/Q6) se confirme
+  manuellement (vrai trackpad qui repose sur le panneau) ou se considère inchangé
+  si l'épopée en cours ne touche pas au rendu des cartes. Le **Peek** (Sprite +
+  texte), lui, se capture bien au `screencapture` car il est déclenché par un
+  **événement** (POST d'un `Stop` marquant), pas par la souris — fenêtre ~2,5 s.
+- **Preuve** (HP épopée #41, 2026-07-20) : `reveal_move` unique → aucune trace,
+  screenshot vide (Étendu déjà receded) ; répété avec vrai mouvement → traces
+  `révélation: 6 session card(s)` fiables mais screenshot toujours raté ; un
+  `Stop` finissant sur `?` → Peek capturé net (pastille Sprite + texte).
+- **Pourquoi** : justesse — s'entêter à screenshoter l'Étendu maintenu fait
+  conclure à tort « la Révélation ne marche pas » alors que la trace prouve le
+  contraire ; c'est la trace qui tranche le mécanisme, le screenshot ne tranche
+  que le Peek. Déplacer la souris pendant que Loïc travaille reste intrusif —
+  vite, puis rendre le curseur.
+
+## Suite HP : l'orchestrateur la déroule lui-même (ne pas s'entêter sur un sous-agent mort)
+
+- **Découverte** (gate final épopée #41, 2026-07-20) : un sous-agent délégué pour
+  dérouler `/agentic-tests HP` s'est mis **idle immédiatement après spawn sans
+  exécuter la moindre étape** (aucun process `Island`, port 41414 libre, flag
+  `hooksInstallAttempted` jamais posé, repo intact, notifications idle vides).
+- **Bonne méthode** : ne pas s'acharner à re-nudger un runner de test délégué qui
+  part idle sans rien faire — l'orchestrateur **déroule la suite HP directement**
+  (build + lancer `.build/debug/Island` + POST des fixtures + lire les traces).
+  C'est plus fiable et le contexte reste maîtrisé.
+- **Preuve** : deux relances du sous-agent → deux notifications idle vides ; HP
+  entièrement déroulée par l'orchestrateur ensuite (HP-01→04 verts).
+- **Pourquoi** : fiabilité — un runner délégué inerte bloque le gate ; l'orchestrateur
+  a tout ce qu'il faut pour dérouler HP lui-même, la délégation n'est pas un dû.
 
 ## Fichiers de config réels : backup + restauration byte-exacte
 
