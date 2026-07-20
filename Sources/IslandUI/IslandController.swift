@@ -3,27 +3,36 @@ import DynamicNotchKit
 import IslandStore
 import SwiftUI
 
-/// Drives the Island (ADR-0003): a compact floating bar by default — one
-/// pixel-art Sprite per live Session (issue #11) — and two expansions, only
-/// ever triggered by:
-/// - a 2-3 s Peek when a Session finishes its turn (then back to compact);
-/// - hovering the Island, which shows the Extended mode (one card per
-///   Session: project, state, last prompt, running tool, elapsed time) and
-///   folds back to compact as soon as the pointer leaves.
+/// Drives the Island (ADR-0007): a `.floating` panel that is **Masqué** (nothing
+/// on screen) by default — even while Sessions work — and only ever surfaces by:
+/// - a ~2.5 s **Peek** when a Session waits or finishes its turn, then back to
+///   Masqué (the persistence of attention is carried by the Liseré, not the Peek);
+/// - a deliberate **Reveal** — the global mouse monitor detects the top-edge
+///   gesture via the pure ``shouldReveal(at:in:sessionCount:)`` and deploys the
+///   **Étendu** (one card per Session), which the native `.keepVisible` hover
+///   keeps open and which recedes to Masqué when the pointer leaves.
 ///
-/// The Island never expands on its own outside those two paths. The panel is
-/// non-activating (DynamicNotchKit uses a `.nonactivatingPanel`), so it never
-/// steals focus from the terminal.
+/// The Island never expands on its own outside those two paths, and neither the
+/// Reveal nor the hover acknowledges anything (looking ≠ treating): Acknowledgement
+/// happens one Session at a time via click-to-focus (#10) or terminal refocus.
+/// The panel is non-activating (DynamicNotchKit uses a `.nonactivatingPanel`), so
+/// it never steals focus from the terminal.
 ///
 /// Depends only on the generic session store (ADR-0004). Store updates are
 /// throttled before touching the view model: PreToolUse/PostToolUse arrive at
 /// high rate and must not trigger one render each.
 @MainActor
 public final class IslandController {
+    /// The Island's visibility machine (ADR-0007, issue #53). The floating
+    /// panel is hidden by default; it only surfaces for a transient Peek or a
+    /// deliberate Reveal, then recedes back to Masqué.
     private enum Mode {
-        case compact
+        /// Masqué: nothing on screen, even while Sessions work.
+        case hidden
+        /// Peek: transient surface on a marking event, then back to Masqué.
         case peek
-        case expandedHover
+        /// Étendu: the revealed cards, kept open by hover, folds on pointer exit.
+        case expanded
     }
 
     private let store: SessionStore
@@ -42,10 +51,22 @@ public final class IslandController {
     private var knownEndedSessionIDs: Set<String> = []
     private var knownWaitingSessionIDs: Set<String> = []
     private var peekTask: Task<Void, Never>?
-    private var mode: Mode = .compact
+    /// Anti-flicker grace before the revealed Island recedes to Masqué.
+    private var recedeTask: Task<Void, Never>?
+    private var mode: Mode = .hidden
 
-    /// How long a Peek stays on screen before folding back to compact.
+    /// How long a Peek stays on screen before folding back to Masqué.
     private let peekDuration: Duration = .seconds(2.5)
+    /// Grace delay before a hover-off recedes the Étendu to Masqué: bridges the
+    /// brief gap between the top-edge gesture and the pointer landing on the
+    /// panel, so the Island does not flicker shut mid-reveal.
+    private let recedeGrace: Duration = .milliseconds(300)
+    /// Width of the centred top-edge band that triggers a Reveal (~webcam),
+    /// used by the pure ``shouldReveal(at:in:sessionCount:)`` (issue #53).
+    public static let revealBandWidth: CGFloat = 280
+    /// How close to the very top edge the cursor must be pinned to count as the
+    /// deliberate "hard edge" gesture (a couple of points of hardware slack).
+    private static let edgeTolerance: CGFloat = 2
     /// Store updates are coalesced to at most one UI refresh per interval.
     private let refreshInterval: DispatchQueue.SchedulerTimeType.Stride = .milliseconds(200)
 
@@ -64,22 +85,26 @@ public final class IslandController {
         }
     }
 
-    /// Shows the compact Island and starts reacting to session changes.
+    /// Starts reacting to session changes. The Island stays Masqué (nothing on
+    /// screen) until a Peek or a Reveal surfaces it (ADR-0007, issue #53).
     public func activate() async {
         let viewModel = viewModel
-        // `.notch` (not `.auto`/`.floating`): in DynamicNotchKit, the floating
-        // style *hides* the panel in compact state, so a notchless Mac would
-        // have no visible compact Island at all. The notch style falls back to
-        // a 300 pt top-center bar on notchless screens — the micro-bar we want.
+        // `.floating` (ADR-0007): the Island is masqué by default on a notchless
+        // Mac. In DynamicNotchKit the floating style *hides* the panel on
+        // `compact()`, so there is no always-visible micro-bar; the panel only
+        // exists during a Peek or a Reveal. Its `.keepVisible` hover keeps the
+        // Étendu open while the pointer is on it.
         let notch = DynamicNotch(
             hoverBehavior: [.keepVisible],
-            style: .notch,
+            style: .floating,
             expanded: { ExpandedContentView(model: viewModel) },
             compactLeading: { CompactLeadingView() },
             compactTrailing: { CompactTrailingView(model: viewModel) }
         )
         self.notch = notch
-        await notch.compact()
+        // No initial surface: Masqué is the resting state.
+        mode = .hidden
+        log("masqué (au repos)")
 
         store.$sessions
             .throttle(for: refreshInterval, scheduler: DispatchQueue.main, latest: true)
@@ -205,53 +230,101 @@ public final class IslandController {
             .joined(separator: " ")
     }
 
-    // MARK: - Extended mode (hover only)
+    // MARK: - Reveal / Extended mode (issue #53)
 
+    /// Deliberate Reveal from the global mouse monitor: the cursor was pinned to
+    /// the top-centre edge (``shouldReveal(at:in:sessionCount:)`` already vetted
+    /// the geometry and the ≥1-Session rule), so deploy the Étendu. Works at any
+    /// time — rest or waiting — and over a full-screen app (the panel is
+    /// `.screenSaver` + `.canJoinAllSpaces`). Never acknowledges: looking ≠
+    /// treating (ADR-0007).
+    public func reveal() {
+        expandToExtended(trigger: "révélation")
+    }
+
+    /// Whether the top-edge gesture should Reveal the Island: cursor pinned to
+    /// the top edge (Cocoa `maxY`) *and* inside the centred ~280 pt band near
+    /// the webcam *and* at least one Session exists. Pure — the `NSEvent`
+    /// monitor is a thin shell delegating every decision here (issue #53).
+    public static func shouldReveal(
+        at mouseLocation: CGPoint,
+        in screenFrame: CGRect,
+        sessionCount: Int
+    ) -> Bool {
+        guard sessionCount >= 1 else { return false }
+        let atTopEdge = mouseLocation.y >= screenFrame.maxY - edgeTolerance
+        let inCentreBand = abs(mouseLocation.x - screenFrame.midX) <= revealBandWidth / 2
+        return atTopEdge && inCentreBand
+    }
+
+    /// Native DynamicNotchKit hover, live only while a panel exists (`state !=
+    /// .hidden`). Hovering a Peek promotes it to the Étendu; hovering the
+    /// revealed panel keeps it open; leaving it recedes to Masqué after a grace
+    /// delay. Never acknowledges (ADR-0007).
     func hoverDidChange(_ hovering: Bool) {
         if hovering {
-            peekTask?.cancel()
-            mode = .expandedHover
-            // Extended open (issue #32): re-read titles so a /rename done while
-            // the Session was idle/ended — which fired no hook — shows up now.
-            refreshTitles?()
-            viewModel.showCards = true
-            // Hovering the Island is an Acknowledgement (issue #8): the user
-            // has seen the pending states, the Liseré goes out.
-            store.acknowledgeAll()
-            log("expanded on hover: \(viewModel.cards.count) session card(s), acknowledged all")
-            Task { [weak self] in
-                await self?.notch?.expand()
-            }
-        } else if mode == .expandedHover {
-            mode = .compact
-            viewModel.showCards = false
-            log("hover ended, folded back to compact")
-            Task { [weak self] in
-                await self?.notch?.compact()
-            }
+            expandToExtended(trigger: "révélation (survol)")
+        } else if mode == .expanded {
+            scheduleRecede()
+        }
+    }
+
+    /// Deploys the Étendu (cards), idempotent: a second trigger while already
+    /// expanded just cancels a pending recede. Re-reads titles on open (#32) so
+    /// a `/rename` on an idle/ended Session — which fired no hook — shows now.
+    private func expandToExtended(trigger: String) {
+        peekTask?.cancel()
+        recedeTask?.cancel()
+        recedeTask = nil
+        guard mode != .expanded else { return }
+        mode = .expanded
+        refreshTitles?()
+        viewModel.showCards = true
+        log("\(trigger): \(viewModel.cards.count) session card(s)")
+        Task { [weak self] in
+            await self?.notch?.expand()
+        }
+    }
+
+    /// Recede the revealed Island to Masqué after a short anti-flicker grace, so
+    /// a pointer briefly leaving and re-entering the panel does not blink it shut.
+    private func scheduleRecede() {
+        recedeTask?.cancel()
+        recedeTask = Task { [weak self, recedeGrace] in
+            try? await Task.sleep(for: recedeGrace)
+            guard let self, !Task.isCancelled, self.mode == .expanded,
+                self.notch?.isHovering != true
+            else { return }
+            self.mode = .hidden
+            self.viewModel.showCards = false
+            self.log("masqué (curseur quitte le panneau)")
+            await self.notch?.hide()
         }
     }
 
     // MARK: - Peek
 
-    /// Expands the Island for a short while, then folds back to compact.
-    /// Never fights the Extended mode: while hovered, no Peek.
+    /// Surfaces the Island in a transient Peek, then recedes to Masqué. Never
+    /// fights the Étendu: while revealed, no Peek (ADR-0007, issue #53).
     private func peek(for session: Session) {
-        guard mode != .expandedHover else { return }
+        guard mode != .expanded else { return }
         viewModel.peekText = Self.peekText(for: session)
         viewModel.peekSessionID = session.id
+        // A Peek shows the peek text, not the cards, whatever the last Reveal left.
+        viewModel.showCards = false
 
         peekTask?.cancel()
+        recedeTask?.cancel()
         mode = .peek
         peekTask = Task { [weak self, peekDuration] in
             guard let self, let notch = self.notch else { return }
-            log("peek shown: \(self.viewModel.peekText)")
+            log("peek: \(self.viewModel.peekText)")
             await notch.expand()
             try? await Task.sleep(for: peekDuration)
             guard !Task.isCancelled, self.mode == .peek else { return }
-            self.mode = .compact
-            await notch.compact()
-            log("peek folded back to compact")
+            self.mode = .hidden
+            await notch.hide()
+            log("masqué (peek terminé)")
         }
     }
 
