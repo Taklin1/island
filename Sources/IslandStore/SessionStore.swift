@@ -8,6 +8,11 @@ public struct Session: Identifiable, Equatable, Sendable {
     public var state: SessionState
     /// Working directory of the session, when known.
     public var cwd: String?
+    /// Session title, when the adapter could extract one (issue #32, e.g. the
+    /// Claude Code `ai-title`). `nil` until a title is known; the UI then falls
+    /// back to ``projectName``. Reflects `/rename`: the store keeps the latest
+    /// title an event carried.
+    public var title: String?
     /// Which agent tool drives this session (e.g. "claude-code").
     public let agent: String
     /// Terminal hosting the session (e.g. "ghostty"), when known.
@@ -26,6 +31,12 @@ public struct Session: Identifiable, Equatable, Sendable {
     /// True while a marking event (waiting / turn ended) has not been
     /// Acknowledged by the user. Drives the Liseré.
     public var needsAcknowledgement: Bool
+    /// Sous-agents still running under this Session at its last Stop (issues
+    /// #31/#48). Read from the Stop's `background_tasks` list (ADR-0008
+    /// amended): a Session with a live Sous-agent is never shown "terminée" —
+    /// its turn is not done — and the count feeds the discreet tally on the
+    /// Extended card (Q6). Reset to zero when a new turn starts.
+    public var activeSubagentCount: Int
 
     /// Human-readable project name: last path component of the cwd.
     public var projectName: String {
@@ -37,6 +48,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         id: String,
         state: SessionState,
         cwd: String? = nil,
+        title: String? = nil,
         agent: String,
         terminal: String? = nil,
         lastPrompt: String? = nil,
@@ -44,11 +56,13 @@ public struct Session: Identifiable, Equatable, Sendable {
         turnStartedAt: Date? = nil,
         lastSummary: TurnSummary? = nil,
         lastActivityAt: Date = Date(),
-        needsAcknowledgement: Bool = false
+        needsAcknowledgement: Bool = false,
+        activeSubagentCount: Int = 0
     ) {
         self.id = id
         self.state = state
         self.cwd = cwd
+        self.title = title
         self.agent = agent
         self.terminal = terminal
         self.lastPrompt = lastPrompt
@@ -57,6 +71,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         self.lastSummary = lastSummary
         self.lastActivityAt = lastActivityAt
         self.needsAcknowledgement = needsAcknowledgement
+        self.activeSubagentCount = activeSubagentCount
     }
 }
 
@@ -118,7 +133,8 @@ public final class SessionStore: ObservableObject {
             return
         }
 
-        var session = sessions.first(where: { $0.id == event.sessionID })
+        let existing = sessions.first(where: { $0.id == event.sessionID })
+        var session = existing
             ?? Session(
                 id: event.sessionID,
                 state: .idle,
@@ -132,6 +148,12 @@ public final class SessionStore: ObservableObject {
         }
         if let terminal = event.terminal {
             session.terminal = terminal
+        }
+        // Title (issue #32): keep the latest one an event carried, and never
+        // clear a known title when a later event could not read one — so a
+        // /rename is reflected while a titleless event leaves it untouched.
+        if let title = event.title {
+            session.title = title
         }
         session.lastActivityAt = timestamp
 
@@ -147,6 +169,10 @@ public final class SessionStore: ObservableObject {
             session.turnStartedAt = timestamp
             session.needsAcknowledgement = false
             session.lastSummary = nil
+            // A new prompt is a fresh turn: any Sous-agent tally from the
+            // previous turn's Stop is stale (#48). The next Stop re-reads the
+            // live list from `background_tasks`.
+            session.activeSubagentCount = 0
         case let .toolStarted(tool):
             session.state = .running
             session.currentTool = tool
@@ -156,15 +182,39 @@ public final class SessionStore: ObservableObject {
             }
         case .toolFinished:
             session.currentTool = nil
-        case .turnEnded:
-            session.state = .ended
+        case let .turnEnded(awaitsReply, liveSubagentCount):
+            // The main turn's Stop fired, carrying the live Sous-agent tally
+            // read from `background_tasks` at this exact Stop (#48, ADR-0008
+            // amended). Resolution, race-free (the count is in the payload):
+            //   • a question wins immediately — orange, even with a Sous-agent
+            //     still live (Q5, #39 non-regression);
+            //   • otherwise a constat stays "en cours" while a Sous-agent runs
+            //     (the gate) and only ends once a later Stop reports zero.
+            // Every Sous-agent completion injects a fresh main turn ⇒ a fresh
+            // Stop, so the gate always re-resolves on an event — no clock tick.
             session.currentTool = nil
-            session.turnStartedAt = nil
-            session.needsAcknowledgement = true
             session.lastSummary = event.summary
+            session.activeSubagentCount = liveSubagentCount
+            if awaitsReply {
+                session.state = .waiting
+                session.turnStartedAt = nil
+                session.needsAcknowledgement = true
+            } else if liveSubagentCount > 0 {
+                session.state = .running
+            } else {
+                session.state = .ended
+                session.turnStartedAt = nil
+                session.needsAcknowledgement = true
+            }
         case .waitingForUser:
-            session.state = .waiting
-            session.needsAcknowledgement = true
+            // Root cause B (#31): a genuine block moves the Session to waiting
+            // from any live state, but never resurrects a turn that already
+            // ended — a real permission/question never follows a finished turn,
+            // so a stray notification must not turn a "terminé" back into "?".
+            if session.state != .ended {
+                session.state = .waiting
+                session.needsAcknowledgement = true
+            }
         }
 
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {
@@ -174,9 +224,24 @@ public final class SessionStore: ObservableObject {
         }
     }
 
+    // MARK: - Title refresh (issue #32)
+
+    /// Updates a known Session's title out of band — used by the Extended-hover
+    /// refresh to reflect a `/rename` that fired no hook (an idle/ended Session
+    /// gets no further event to re-read its transcript). No-op for an unknown
+    /// Session or an unchanged title, so it never publishes needlessly.
+    public func setTitle(_ title: String, forSessionID id: String) {
+        guard let index = sessions.firstIndex(where: { $0.id == id }),
+            sessions[index].title != title
+        else { return }
+        sessions[index].title = title
+    }
+
     // MARK: - Acknowledgement (issues #8 / #10)
 
-    /// Hovering the Island acknowledges every pending Session at once.
+    /// Acknowledges every pending Session at once. Since ADR-0007 (issue #53)
+    /// no production path clears the Liseré wholesale — revealing or hovering the
+    /// Island acknowledges nothing (looking ≠ treating). Kept as a bulk helper.
     public func acknowledgeAll() {
         acknowledge { _ in true }
     }

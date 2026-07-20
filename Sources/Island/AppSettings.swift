@@ -12,6 +12,7 @@ struct AppSettings {
     static let soundEnabledKey = "soundEnabled"
     static let hooksInstallAttemptedKey = "hooksInstallAttempted"
     static let statuslineTeeEnabledKey = "statuslineTeeEnabled"
+    static let menuBarIconEnabledKey = "menuBarIconEnabled"
 
     private let defaults: UserDefaults
 
@@ -25,6 +26,10 @@ struct AppSettings {
             // default — the app never touches the user's statusline script
             // without an explicit menu action.
             Self.statuslineTeeEnabledKey: false,
+            // Icône animée (issue #54): the menu-bar mascot is shown by
+            // default. Turned off, the status item falls back to a static
+            // neutral icon; the menu stays reachable either way.
+            Self.menuBarIconEnabledKey: true,
         ])
     }
 
@@ -46,6 +51,11 @@ struct AppSettings {
     var statuslineTeeEnabled: Bool {
         get { defaults.bool(forKey: Self.statuslineTeeEnabledKey) }
         nonmutating set { defaults.set(newValue, forKey: Self.statuslineTeeEnabledKey) }
+    }
+
+    var menuBarIconEnabled: Bool {
+        get { defaults.bool(forKey: Self.menuBarIconEnabledKey) }
+        nonmutating set { defaults.set(newValue, forKey: Self.menuBarIconEnabledKey) }
     }
 }
 

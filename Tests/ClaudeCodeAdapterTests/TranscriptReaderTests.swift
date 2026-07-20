@@ -40,6 +40,19 @@ private enum TranscriptFixtures {
         {"parentUuid":"q-u1","isSidechain":false,"type":"assistant","message":{"id":"msg_Q1","type":"message","role":"assistant","model":"claude-test","content":[{"type":"tool_use","id":"toolu_q1","name":"AskUserQuestion","input":{"questions":[{"question":"Which sprite direction for Compact mode?","header":"Sprites","multiSelect":false,"options":[{"label":"Bots (Recommended)","description":"Robot-terminal, most legible at 32px."},{"label":"Blobs","description":"Round Tamagotchi-like creature."},{"label":"None — iterate","description":"Nothing fits; propose a new set."}]},{"question":"Keep the state glyphs as-is?","header":"Glyphs","multiSelect":true,"options":[{"label":"Cadence OK","description":"Keep 2-7 fps by state."},{"label":"Glyphs OK","description":"Keep the floating state glyphs."}]}]}}],"stop_reason":"tool_use"},"requestId":"req_q","uuid":"q-a1","timestamp":"2026-07-19T11:00:05.000Z","sessionId":"11111111-2222-3333-4444-555555555555","cwd":"/Users/dev/projects/demo","version":"2.1.215","gitBranch":"main"}
         """
 
+    /// An AUTO-generated title record (issue #32): `type:"ai-title"`. Claude
+    /// Code re-emits it as the conversation grows and NEVER changes it on a
+    /// `/rename` — it stays frozen on the first auto value.
+    static func aiTitleLine(_ title: String) -> String {
+        #"{"type":"ai-title","aiTitle":"\#(title)","sessionId":"11111111-2222-3333-4444-555555555555"}"#
+    }
+
+    /// A MANUAL `/rename` record (issue #32): a DISTINCT `type:"custom-title"`
+    /// with a `customTitle` field (verified against real transcripts).
+    static func customTitleLine(_ title: String) -> String {
+        #"{"type":"custom-title","customTitle":"\#(title)","sessionId":"11111111-2222-3333-4444-555555555555"}"#
+    }
+
     /// Writes a fixture to a unique temp file and returns its URL.
     static func write(_ contents: String, name: String = UUID().uuidString) -> URL {
         let url = FileManager.default.temporaryDirectory
@@ -151,5 +164,108 @@ struct TranscriptReaderTests {
             TranscriptReader.summary(ofTranscriptAt: url, maxTailBytes: 64 * 1024))
         #expect(summary.text?.hasPrefix("Fixed the parser crash.") == true)
         #expect(summary.turnDuration == 200)
+    }
+
+    // MARK: - Session title (issue #32)
+    //
+    // /rename writes a DISTINCT `custom-title` record; `ai-title` is the
+    // auto-generated title and never changes on rename. The manual rename
+    // always wins. Fixtures mirror the real transcript structures.
+
+    @Test("(d) With only an ai-title, the auto title is used")
+    func autoTitleUsedWhenNoRename() throws {
+        let url = TranscriptFixtures.write(
+            TranscriptFixtures.aiTitleLine("Ghostty redirection not working") + "\n"
+                + TranscriptFixtures.sessionTail)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(TranscriptReader.title(ofTranscriptAt: url) == "Ghostty redirection not working")
+    }
+
+    @Test("(c) With only a custom-title, the manual rename is used")
+    func customTitleUsedWhenNoAutoTitle() throws {
+        let url = TranscriptFixtures.write(
+            TranscriptFixtures.sessionTail + "\n" + TranscriptFixtures.customTitleLine("TEST ?"))
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(TranscriptReader.title(ofTranscriptAt: url) == "TEST ?")
+    }
+
+    @Test("(a) An ai-title then a later /rename: the custom-title wins")
+    func renameOverridesEarlierAutoTitle() throws {
+        let url = TranscriptFixtures.write(
+            TranscriptFixtures.aiTitleLine("Auto generated title") + "\n"
+                + TranscriptFixtures.sessionTail + "\n"
+                + TranscriptFixtures.customTitleLine("Renamed by the user"))
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(TranscriptReader.title(ofTranscriptAt: url) == "Renamed by the user")
+    }
+
+    @Test("(b) A /rename then MORE RECENT frozen ai-titles: the custom-title still wins")
+    func renameWinsEvenWhenAutoTitleIsMoreRecent() throws {
+        // The exact real shape: after a manual rename, Claude Code keeps
+        // re-emitting the (frozen) auto ai-title AFTER the custom-title. The
+        // rename must still win despite sitting earlier in the file.
+        let autoReemissions = Array(
+            repeating: TranscriptFixtures.aiTitleLine("Ghostty redirection not working"),
+            count: 5
+        ).joined(separator: "\n")
+        let url = TranscriptFixtures.write(
+            TranscriptFixtures.customTitleLine("Titre A") + "\n"
+                + TranscriptFixtures.customTitleLine("TEST ?") + "\n"
+                + autoReemissions)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(TranscriptReader.title(ofTranscriptAt: url) == "TEST ?")
+    }
+
+    @Test("(f) Several custom-titles: the last one wins")
+    func lastCustomTitleWins() throws {
+        let url = TranscriptFixtures.write(
+            TranscriptFixtures.customTitleLine("first rename") + "\n"
+                + TranscriptFixtures.customTitleLine("second rename") + "\n"
+                + TranscriptFixtures.customTitleLine("final rename"))
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(TranscriptReader.title(ofTranscriptAt: url) == "final rename")
+    }
+
+    @Test("(e) A transcript with neither title yields nil (caller falls back to the folder)")
+    func noTitleYieldsNil() throws {
+        let url = TranscriptFixtures.write(TranscriptFixtures.sessionTail)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(TranscriptReader.title(ofTranscriptAt: url) == nil)
+    }
+
+    @Test("A missing or corrupted transcript yields no title without crashing")
+    func corruptedTranscriptYieldsNilTitle() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("transcript-fixture-\(UUID().uuidString)-missing.jsonl")
+        #expect(TranscriptReader.title(ofTranscriptAt: missing) == nil)
+
+        let url = TranscriptFixtures.write("""
+            this is not json at all
+            {"type":"custom-title","customTitle": broken
+            \u{0}\u{1}binary garbage\u{FFFD}
+            """)
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(TranscriptReader.title(ofTranscriptAt: url) == nil)
+    }
+
+    @Test("A /rename far from the end is still found with the default cap (regression: a small cap missed it) #32")
+    func renameFoundFarFromEnd() throws {
+        // The custom-title can sit well before EOF when a long turn (and frozen
+        // ai-title re-emissions) followed it. The default cap (4 MB) must reach
+        // it — and the rename must still win over the more recent ai-titles.
+        let fillerLine = TranscriptFixtures.aiTitleLine("Frozen auto title")
+        let fillerCount = (300 * 1024) / (fillerLine.count + 1) + 1
+        let filler = Array(repeating: fillerLine, count: fillerCount).joined(separator: "\n")
+        let contents = TranscriptFixtures.customTitleLine("Renamed then a long turn") + "\n" + filler
+        let url = TranscriptFixtures.write(contents)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(TranscriptReader.title(ofTranscriptAt: url) == "Renamed then a long turn")
     }
 }

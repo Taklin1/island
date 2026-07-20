@@ -18,7 +18,7 @@ struct GlowControllerTests {
 
         #expect(controller.currentColor == nil)
 
-        store.apply(event("s1", .turnEnded))
+        store.apply(event("s1", .turnEnded(awaitsReply: false, liveSubagentCount: 0)))
         #expect(controller.currentColor == .green)
 
         // Orange (waiting) wins over green (finished).

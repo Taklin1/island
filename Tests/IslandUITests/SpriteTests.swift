@@ -18,6 +18,47 @@ struct SpriteTests {
         #expect(SpriteAnimation.animation(for: .waiting) == .question)
     }
 
+    @Test("The menu-bar mascot aggregates the most pressing state: waiting > finished > working > sleeping")
+    func menuBarMascotAggregatesTheMostPressingState() {
+        func session(_ id: String, _ state: SessionState, ack needsAck: Bool = false) -> Session {
+            Session(id: id, state: state, agent: "claude-code", needsAcknowledgement: needsAck)
+        }
+
+        // No Session at all: the mascot sleeps.
+        #expect(SpriteAnimation.menuBarMascot(for: []) == .sleeping)
+
+        // Waiting wins over finished, working and idle — even mixed together,
+        // and even with several Sessions sharing the winning state (one mascot).
+        #expect(SpriteAnimation.menuBarMascot(for: [
+            session("a", .running),
+            session("b", .ended, ack: true),
+            session("c", .waiting, ack: true),
+            session("d", .waiting, ack: true),
+            session("e", .idle),
+        ]) == .question)
+
+        // Finished wins over working and idle when nothing waits.
+        #expect(SpriteAnimation.menuBarMascot(for: [
+            session("a", .running),
+            session("b", .idle),
+            session("c", .ended, ack: true),
+        ]) == .finished)
+
+        // Working wins over idle when nothing waits nor finished.
+        #expect(SpriteAnimation.menuBarMascot(for: [
+            session("a", .idle),
+            session("b", .running),
+        ]) == .working)
+
+        // Everything acknowledged (Liseré out): the mascot sleeps again, even
+        // though the Sessions keep their waiting/ended state.
+        #expect(SpriteAnimation.menuBarMascot(for: [
+            session("a", .waiting, ack: false),
+            session("b", .ended, ack: false),
+            session("c", .idle),
+        ]) == .sleeping)
+    }
+
     @Test("Frames advance at the animation's own pace and loop")
     func framesAdvanceAtTheAnimationPaceAndLoop() {
         let sheet = SpriteSheet.bot
@@ -59,21 +100,6 @@ struct SpriteTests {
         #expect(card(.idle).animation == .sleeping)
         #expect(card(.ended).animation == .finished)
         #expect(card(.waiting).animation == .question)
-    }
-
-    @Test("The compact bar shows one Sprite per Session, in order")
-    func compactBarShowsOneSpritePerSession() {
-        let sessions = [
-            Session(id: "a", state: .running, agent: "claude-code"),
-            Session(id: "b", state: .idle, agent: "claude-code"),
-            Session(id: "c", state: .waiting, agent: "claude-code"),
-        ]
-
-        let sprites = IslandController.compactSprites(for: sessions)
-
-        #expect(sprites.map(\.id) == ["a", "b", "c"])
-        #expect(sprites.map(\.animation) == [.working, .sleeping, .question])
-        #expect(IslandController.compactSprites(for: []).isEmpty)
     }
 
     @Test("The embedded sheets match the descriptor's grid")

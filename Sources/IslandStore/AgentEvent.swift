@@ -50,6 +50,11 @@ public struct AgentEvent: Equatable, Sendable {
     /// Only meaningful on `.turnEnded`; `nil` when extraction failed — the
     /// event still flows (fallback: state + project).
     public let summary: TurnSummary?
+    /// Human-readable session title, extracted locally by the adapter (issue
+    /// #32, e.g. from the Claude Code `ai-title` record). `nil` when the
+    /// adapter could not read one on this event — the store then keeps the last
+    /// known title, and the UI falls back to the project folder name.
+    public let title: String?
 
     public init(
         sessionID: String,
@@ -57,7 +62,8 @@ public struct AgentEvent: Equatable, Sendable {
         cwd: String? = nil,
         terminal: String? = nil,
         agent: String,
-        summary: TurnSummary? = nil
+        summary: TurnSummary? = nil,
+        title: String? = nil
     ) {
         self.sessionID = sessionID
         self.kind = kind
@@ -65,6 +71,7 @@ public struct AgentEvent: Equatable, Sendable {
         self.terminal = terminal
         self.agent = agent
         self.summary = summary
+        self.title = title
     }
 }
 
@@ -80,7 +87,23 @@ public enum AgentEventKind: Equatable, Sendable {
     /// The tool finished; the agent keeps working on the turn.
     case toolFinished(tool: String)
     /// The agent finished its turn (the Session stays alive, idle).
-    case turnEnded
+    ///
+    /// `awaitsReply` is the adapter's local reading of whether the last
+    /// assistant message ended on a question (`?`, issue #39 / ADR-0006):
+    /// a question resolves to `.waiting` (orange) **immediately**, even with a
+    /// subagent still live (Q5, question wins). The adapter only *detects*; it
+    /// never emits `.waitingForUser` directly, which would bypass the gate.
+    ///
+    /// `liveSubagentCount` is the number of **Sous-agents still running at this
+    /// Stop**, read from the hook's `background_tasks` list (issue #48,
+    /// ADR-0008 amended): entries with `type == "subagent"` and a non-empty
+    /// `id`. On a constat (`awaitsReply == false`), a non-zero count keeps the
+    /// Session `.running` (the gate) — it becomes `.ended` only once a later
+    /// Stop reports zero. This is race-free: the count comes from the Stop
+    /// payload itself, so it never depends on a subagent's own hooks landing
+    /// first, and no clock tick is needed (every subagent completion triggers a
+    /// fresh main turn ⇒ a fresh Stop that re-evaluates the list).
+    case turnEnded(awaitsReply: Bool, liveSubagentCount: Int)
     /// The agent is blocked on the user (permission request or question).
     case waitingForUser(message: String?)
     /// The Session closed for good: it disappears from the Island.
@@ -98,4 +121,20 @@ public enum SessionState: Equatable, Sendable {
     case ended
     /// Blocked on the user: permission request or question ("attend").
     case waiting
+}
+
+extension SessionState {
+    /// Priorité d'état (issue #44): the single source of how "pressing" each
+    /// state is — waiting > terminé > working > idle — a lower rank being more
+    /// pressing. This is the one place the order lives; the Extended card sort,
+    /// the Icône animée (menu-bar mascot) and the Peek selection all read it
+    /// instead of re-encoding the order inline.
+    public var priorityRank: Int {
+        switch self {
+        case .waiting: 0
+        case .ended: 1
+        case .running: 2
+        case .idle: 3
+        }
+    }
 }
