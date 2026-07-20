@@ -663,7 +663,12 @@ struct SessionCardView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            if let summary = card.summaryText {
+            // When a structured question is present (#26), IT is the card's
+            // presentation: the finished-turn prose would be redundant, so the
+            // summary block cedes to the question below. Exclusive by
+            // construction — never rely on lastSummary happening to be nil on
+            // the AskUserQuestion path (a future waiting source could break it).
+            if card.question == nil, let summary = card.summaryText {
                 Text(summary)
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.9))
