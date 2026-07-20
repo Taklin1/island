@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.15
+
+- #55 Peek « spritey » + retrait du mode Compact mort (ADR-0007) : le clin d'œil transitoire affiche désormais le **Sprite** de la Session concernée (son animation encode l'état — check vert terminé, `?` clignotant en attente, via `IslandController.peekAnimation(for:)`) à côté du texte, et reste **cliquable** (click-to-focus #10). `CompactLeadingView` / `CompactTrailingView` et toute la machinerie devenue morte avec le `.floating` (`compactSprites`/`compactTone`/`CompactSprite`/`CompactTone`/`spritesTrace`) sont **supprimés** — `DynamicNotch` sans slots compacts (`EmptyView`), aucune référence morte. Les Sprites restent inchangés dans les cartes de l'Étendu. (Épopée #41.)
+
 ## 0.1.14
 
 - #53 Island flottante masquée par défaut (`.floating`, ADR-0007) : au repos, plus rien à l'écran même quand des Sessions travaillent — l'ancien Compact toujours-visible est abandonné. Machine à 3 états Masqué / Peek / Étendu dans `IslandController`. **Révélation** par geste « bord franc » : un moniteur souris global `NSEvent` (coquille mince) délègue toute la décision à la fonction pure `IslandController.shouldReveal(at:in:sessionCount:)` — curseur plaqué au bord haut ∧ bande centrée ~280 pt (webcam) ∧ ≥1 Session — puis déploie l'Étendu (une carte par Session), maintenu ouvert par le hover `.keepVisible` et refermé au départ du curseur avec un délai de grâce anti-clignotement. Peek transitoire ~2,5 s puis retour Masqué. **Acquittement redéfini** : révéler ou survoler l'Island n'acquitte plus rien (regarder ≠ traiter) ; seuls le clic sur une carte (click-to-focus #10) et le refocus terminal acquittent, une Session à la fois. (Épopée #41.)
