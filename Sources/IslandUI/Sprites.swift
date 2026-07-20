@@ -24,6 +24,27 @@ public enum SpriteAnimation: String, CaseIterable, Sendable {
         case .waiting: .question
         }
     }
+
+    /// The single menu-bar mascot (issue #54): the most pressing state
+    /// aggregated over every Session, same priority as the Liseré and the Peek —
+    /// waiting > terminé > working > idle — mapped through ``animation(for:)``.
+    /// Only *unacknowledged* waiting/ended Sessions still press: once the user
+    /// has acknowledged them (Liseré out, ADR-0007) they stop driving the
+    /// mascot. No Session, or everything acknowledged, lets the mascot sleep.
+    /// One mascot only — never a per-Session badge or count.
+    public static func menuBarMascot(for sessions: [Session]) -> SpriteAnimation {
+        let winning: SessionState
+        if sessions.contains(where: { $0.state == .waiting && $0.needsAcknowledgement }) {
+            winning = .waiting
+        } else if sessions.contains(where: { $0.state == .ended && $0.needsAcknowledgement }) {
+            winning = .ended
+        } else if sessions.contains(where: { $0.state == .running }) {
+            winning = .running
+        } else {
+            winning = .idle
+        }
+        return animation(for: winning)
+    }
 }
 
 /// Layout and pace of one embedded sprite sheet: one row per animation, one

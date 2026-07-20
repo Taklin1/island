@@ -3,6 +3,22 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.16
+
+- #60 Durcit le recede de la Révélation (ADR-0007) : l'Étendu se déployant *autour* du curseur au bord haut, aucun `mouseEntered` natif ne se produit, si bien qu'un curseur repartant sans survoler le panneau le laissait ouvert. Ajout d'un repli **géométrique** — fonction pure `IslandController.shouldRecede(at:in:)` interrogée par le moniteur souris global (coquille mince) qui arme, une seule fois, le même recede anti-clignotement quand l'Étendu est ouvert et le panneau non survolé. Hystérésis (bande recede 340 > bande révélation 280, profondeur de maintien 220 pt couvrant le panneau) : l'oscillation brève au bord ne clignote pas ; le survol natif `isHovering` reste l'autorité, nominal intact. (Épopée #41.)
+
+## 0.1.15
+
+- #55 Peek « spritey » + retrait du mode Compact mort (ADR-0007) : le clin d'œil transitoire affiche désormais le **Sprite** de la Session concernée (son animation encode l'état — check vert terminé, `?` clignotant en attente, via `IslandController.peekAnimation(for:)`) à côté du texte, et reste **cliquable** (click-to-focus #10). `CompactLeadingView` / `CompactTrailingView` et toute la machinerie devenue morte avec le `.floating` (`compactSprites`/`compactTone`/`CompactSprite`/`CompactTone`/`spritesTrace`) sont **supprimés** — `DynamicNotch` sans slots compacts (`EmptyView`), aucune référence morte. Les Sprites restent inchangés dans les cartes de l'Étendu. (Épopée #41.)
+
+## 0.1.14
+
+- #53 Island flottante masquée par défaut (`.floating`, ADR-0007) : au repos, plus rien à l'écran même quand des Sessions travaillent — l'ancien Compact toujours-visible est abandonné. Machine à 3 états Masqué / Peek / Étendu dans `IslandController`. **Révélation** par geste « bord franc » : un moniteur souris global `NSEvent` (coquille mince) délègue toute la décision à la fonction pure `IslandController.shouldReveal(at:in:sessionCount:)` — curseur plaqué au bord haut ∧ bande centrée ~280 pt (webcam) ∧ ≥1 Session — puis déploie l'Étendu (une carte par Session), maintenu ouvert par le hover `.keepVisible` et refermé au départ du curseur avec un délai de grâce anti-clignotement. Peek transitoire ~2,5 s puis retour Masqué. **Acquittement redéfini** : révéler ou survoler l'Island n'acquitte plus rien (regarder ≠ traiter) ; seuls le clic sur une carte (click-to-focus #10) et le refocus terminal acquittent, une Session à la fois. (Épopée #41.)
+
+## 0.1.13
+
+- #54 Icône animée dans la barre des menus : l'`NSStatusItem` porte une mascotte pixel-art unique animée sur timer, reflétant l'état agrégé le plus pressant sur toutes les Sessions (waiting > terminé > working > idle, via la fonction pure `SpriteAnimation.menuBarMascot(for:)` qui ne compte que les waiting/ended non acquittées) ; une seule mascotte, jamais de badge ; à vide ou tout acquitté elle dort. Réglage « Afficher l'Icône animée » persisté (ON par défaut) : quand off, repli sur une icône statique neutre, le menu (préférences / réinstaller-hooks / quitter) restant toujours accessible. (Épopée #41, ADR-0007.)
+
 ## 0.1.12
 
 - #48 Une Session reste « en cours » tant qu'un Sous-agent `Agent` (background, même `session_id`, distingué par `agent_id`) tourne : le compte des Sous-agents vivants est lu directement dans le tableau `background_tasks` du hook `Stop` (entrées `type == "subagent"`, `id` non vide) — décision au Stop, sans course ni flash vert et sans tic d'horloge (chaque complétion de Sous-agent réinjecte un tour ⇒ nouveau `Stop` qui ré-évalue). La question l'emporte toujours (`?` ⇒ orange immédiat, même Sous-agent actif). Compte discret « ⋯ N sous-agents en cours » sur la carte Étendue. Supprime le compteur mort et la complétion différée de #31. (ADR-0008 amendé : gate `background_tasks` au lieu du timeout ; capture ciblée du fil réel.)

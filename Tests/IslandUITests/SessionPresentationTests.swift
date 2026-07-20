@@ -154,6 +154,21 @@ struct SessionPresentationTests {
         #expect(card(TurnSummary(turnDuration: 65)).summaryFacts == "1:05")
     }
 
+    @Test("The Peek carries the Session's Sprite animation (state-encoded, #55)")
+    func peekCarriesTheSpriteAnimation() {
+        // The transient Peek now shows the Session's mascot (issue #55): its
+        // animation encodes the state, the same mapping the Extended cards use.
+        func animation(_ state: SessionState) -> SpriteAnimation {
+            IslandController.peekAnimation(
+                for: Session(id: "x", state: state, agent: "claude-code"))
+        }
+
+        #expect(animation(.running) == .working)
+        #expect(animation(.idle) == .sleeping)
+        #expect(animation(.ended) == .finished)
+        #expect(animation(.waiting) == .question)
+    }
+
     @Test("The Peek shows the summary's first line, smartly truncated")
     func peekShowsTheSummaryFirstLine() {
         // First non-empty line wins; markdown list/heading markers are shed.
