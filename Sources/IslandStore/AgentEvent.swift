@@ -122,3 +122,19 @@ public enum SessionState: Equatable, Sendable {
     /// Blocked on the user: permission request or question ("attend").
     case waiting
 }
+
+extension SessionState {
+    /// Priorité d'état (issue #44): the single source of how "pressing" each
+    /// state is — waiting > terminé > working > idle — a lower rank being more
+    /// pressing. This is the one place the order lives; the Extended card sort,
+    /// the Icône animée (menu-bar mascot) and the Peek selection all read it
+    /// instead of re-encoding the order inline.
+    public var priorityRank: Int {
+        switch self {
+        case .waiting: 0
+        case .ended: 1
+        case .running: 2
+        case .idle: 3
+        }
+    }
+}
