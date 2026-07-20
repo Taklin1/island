@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.17
+
+- #44 Panneau Étendu : cartes triées par **Priorité d'état** (waiting > terminé > working > idle), départage par récence *par groupe* (`waiting` = plus ancien d'abord contre l'oubli, terminé/working/idle = plus frais d'abord), ordre déterministe (départage final par `id`, donc pas de sautillement) et réordonnancement animé. Le rang est **centralisé** dans `SessionState.priorityRank` (source unique) et consommé aussi par le choix du Peek (`mostPressingForPeek`) et l'Icône animée (`SpriteAnimation.menuBarMascot`) — fin des copies inline. Terme « Priorité d'état » ajouté au glossaire `CONTEXT.md`. (Épopée #46.)
+
 ## 0.1.16
 
 - #60 Durcit le recede de la Révélation (ADR-0007) : l'Étendu se déployant *autour* du curseur au bord haut, aucun `mouseEntered` natif ne se produit, si bien qu'un curseur repartant sans survoler le panneau le laissait ouvert. Ajout d'un repli **géométrique** — fonction pure `IslandController.shouldRecede(at:in:)` interrogée par le moniteur souris global (coquille mince) qui arme, une seule fois, le même recede anti-clignotement quand l'Étendu est ouvert et le panneau non survolé. Hystérésis (bande recede 340 > bande révélation 280, profondeur de maintien 220 pt couvrant le panneau) : l'oscillation brève au bord ne clignote pas ; le survol natif `isHovering` reste l'autorité, nominal intact. (Épopée #41.)
