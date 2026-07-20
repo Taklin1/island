@@ -33,22 +33,23 @@ struct SessionPresentationTests {
         #expect(card.turnStartedAt == Date(timeIntervalSince1970: 42))
     }
 
-    // MARK: - Discreet Sous-agent tally (issue #48, Q6)
+    // MARK: - Discreet background-task tally (issue #48, widened by #79, Q6)
 
-    @Test("The card shows a discreet count of live Sous-agents, singular/plural")
-    func cardShowsLiveSubagentTally() {
+    @Test("The card shows a discreet count of live background tasks, singular/plural")
+    func cardShowsLiveBackgroundTaskTally() {
         func label(_ count: Int) -> String? {
             SessionCard(
                 session: Session(
                     id: "x", state: .running, agent: "claude-code",
-                    activeSubagentCount: count),
+                    activeBackgroundTaskCount: count),
                 home: "/Users/loic"
-            ).subagentsLabel
+            ).backgroundTasksLabel
         }
 
+        // Type-neutral wording (#79): the count mixes Sous-agents, workflows…
         #expect(label(0) == nil) // nothing to show
-        #expect(label(1) == "1 sous-agent en cours")
-        #expect(label(3) == "3 sous-agents en cours")
+        #expect(label(1) == "1 tâche de fond en cours")
+        #expect(label(3) == "3 tâches de fond en cours")
     }
 
     // MARK: - Session title header (issue #32)

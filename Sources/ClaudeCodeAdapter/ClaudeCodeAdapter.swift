@@ -93,12 +93,13 @@ public enum ClaudeCodeAdapter {
             // question ("?") is "attend", not "terminé". Detect it on that
             // verbatim final text (right-trimmed). No interrogative-word scan
             // (false positives); no signal (nil/empty text) ⇒ not a question.
-            // #48 / ADR-0008 amended: also read how many Sous-agents are still
-            // live at this Stop from `background_tasks`, so the store can gate a
-            // constat to `.running` without a race or a clock tick.
+            // #48 / ADR-0008 amended (widened by #79): also read how many
+            // background tasks are still live at this Stop from
+            // `background_tasks`, so the store can gate a constat to `.running`
+            // without a race or a clock tick.
             kind = .turnEnded(
                 awaitsReply: lastMessageIsQuestion(summary?.text),
-                liveSubagentCount: liveSubagentCount(fromHookPayload: data))
+                liveBackgroundTaskCount: liveBackgroundTaskCount(fromHookPayload: data))
         case "Notification":
             // Only notifications that actually block on the user (permission
             // request, question) put the Session in waiting; the idle
@@ -257,14 +258,16 @@ public enum ClaudeCodeAdapter {
         }
     }
 
-    /// How many **Sous-agents** are still running at this Stop, read from the
-    /// hook's `background_tasks` list (issue #48, ADR-0008 amended). Ground
-    /// truth from the targeted capture: a Stop while a background `Agent`
-    /// subagent runs carries an entry `{ id, type: "subagent", status, … }`
-    /// whose `id` is the subagent's agent_id; once it finishes, the list is
-    /// empty. Only entries that are genuinely a Sous-agent count —
-    /// `type == "subagent"` **and** a non-empty `id` — so a `session_crons`
-    /// entry or a blank id is never mistaken for one.
+    /// How many **background tasks** are still running at this Stop, read from
+    /// the hook's `background_tasks` list (issue #48, widened by #79 —
+    /// ADR-0008 amended twice). The field exists precisely to distinguish
+    /// "session is done" from "session is paused waiting for background work"
+    /// (binary schema ground truth, Claude Code 2.1.215), so **every** entry
+    /// with a non-empty `id` counts, whatever its `type` — subagent, workflow,
+    /// shell, monitor, or an unknown future label (no allow-list: the old
+    /// `type == "subagent"` filter let a live workflow flip the card green,
+    /// bug #79). `session_crons` is a **separate field** and never counts;
+    /// a blank or missing `id` disqualifies an entry.
     ///
     /// `background_tasks` is a **JSON array** on the wire (Codable-decodable);
     /// the plist-looking rendering seen while capturing was only an artifact of
@@ -272,12 +275,12 @@ public enum ClaudeCodeAdapter {
     /// failure or unexpected shape yields **0**, so a Stop is never dropped and
     /// the Session simply resolves as it did before the gate — a wrong count is
     /// caught loudly by the real-hook FP (the card would go green during a
-    /// subagent), never masked into a crash.
-    static func liveSubagentCount(fromHookPayload data: Data) -> Int {
+    /// background task), never masked into a crash.
+    static func liveBackgroundTaskCount(fromHookPayload data: Data) -> Int {
         guard let envelope = try? JSONDecoder().decode(BackgroundTasksEnvelope.self, from: data)
         else { return 0 }
         return (envelope.backgroundTasks ?? []).filter { task in
-            task.type == "subagent" && !(task.id ?? "").isEmpty
+            !(task.id ?? "").isEmpty
         }.count
     }
 
@@ -291,11 +294,11 @@ public enum ClaudeCodeAdapter {
         }
     }
 
-    /// One entry of `background_tasks`. Only `id`/`type` matter for the gate;
-    /// every other field (`status`, `agent_type`, `description`…) is ignored.
+    /// One entry of `background_tasks`. Only `id` matters for the gate (#79:
+    /// no type allow-list); every other field (`type`, `status`, `name`,
+    /// `agent_type`, `description`…) is ignored.
     private struct BackgroundTask: Decodable {
         let id: String?
-        let type: String?
     }
 
     /// Whether the turn's last assistant message ends on a question (#39,

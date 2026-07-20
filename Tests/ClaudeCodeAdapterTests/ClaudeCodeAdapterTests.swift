@@ -44,6 +44,29 @@ enum Fixtures {
     }
     """.utf8)
 
+    /// A Stop fired while a background `Workflow` run is still in flight (issue
+    /// #79 ground truth, binary schema 2.1.215): the entry carries
+    /// `type: "workflow"` (+ its `name`), not `"subagent"` — the gate must
+    /// count it all the same.
+    static let stopWithLiveWorkflow = Data("""
+    {
+      "session_id": "abc123",
+      "transcript_path": "/Users/loic/.claude/projects/-Users-loic-Documents-island/abc123.jsonl",
+      "cwd": "/Users/loic/Documents/island",
+      "hook_event_name": "Stop",
+      "last_assistant_message": "Le workflow tourne en arrière-plan.",
+      "background_tasks": [
+        {
+          "id": "wf_a1b2c3",
+          "type": "workflow",
+          "status": "running",
+          "name": "review-changes",
+          "description": "Review changed files across dimensions"
+        }
+      ]
+    }
+    """.utf8)
+
     /// The follow-up Stop once the Sous-agent has finished: `background_tasks`
     /// is empty, so the turn can resolve (constat ⇒ green).
     static let stopWithNoLiveSubagent = Data("""
@@ -340,7 +363,7 @@ struct ClaudeCodeAdapterTests {
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))
 
         #expect(event.sessionID == "abc123")
-        #expect(event.kind == .turnEnded(awaitsReply: false, liveSubagentCount: 0))
+        #expect(event.kind == .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0))
         #expect(event.cwd == "/Users/loic/Documents/island")
         #expect(event.agent == "claude-code")
     }
@@ -365,7 +388,7 @@ struct ClaudeCodeAdapterTests {
             """.utf8)
 
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
-        #expect(event.kind == .turnEnded(awaitsReply: false, liveSubagentCount: 0))
+        #expect(event.kind == .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0))
         #expect(event.summary?.text == "Shipped: the release is tagged.")
         #expect(event.summary?.turnDuration == 42)
     }
@@ -377,7 +400,7 @@ struct ClaudeCodeAdapterTests {
         // refactoring.") still provides the final text — the race-free source
         // Claude Code recommends over the lagging transcript (#39).
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))
-        #expect(event.kind == .turnEnded(awaitsReply: false, liveSubagentCount: 0))
+        #expect(event.kind == .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0))
         #expect(event.summary?.text == "Done refactoring.")
     }
 
@@ -412,13 +435,13 @@ struct ClaudeCodeAdapterTests {
     func stopEndingOnQuestionAwaitsReply() throws {
         let event = try stopEvent(
             lastAssistantText: "I can go with Postgres or SQLite. Which do you want?")
-        #expect(event.kind == .turnEnded(awaitsReply: true, liveSubagentCount: 0))
+        #expect(event.kind == .turnEnded(awaitsReply: true, liveBackgroundTaskCount: 0))
     }
 
     @Test("Stop whose last message ends on a constat sets awaitsReply false")
     func stopEndingOnConstatDoesNotAwaitReply() throws {
         let event = try stopEvent(lastAssistantText: "Done — the parser crash is fixed.")
-        #expect(event.kind == .turnEnded(awaitsReply: false, liveSubagentCount: 0))
+        #expect(event.kind == .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0))
     }
 
     @Test("A rhetorical '?' mid-message that ends on a constat does not await a reply")
@@ -427,13 +450,13 @@ struct ClaudeCodeAdapterTests {
         // followed by a concluding statement, is not a question to the user.
         let event = try stopEvent(
             lastAssistantText: "Is it done? Yes — every test passes and it is shipped.")
-        #expect(event.kind == .turnEnded(awaitsReply: false, liveSubagentCount: 0))
+        #expect(event.kind == .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0))
     }
 
     @Test("Trailing whitespace/newline after the '?' still counts as a question")
     func trailingWhitespaceAfterQuestionStillAwaitsReply() throws {
         let event = try stopEvent(lastAssistantText: "Shall I proceed?\n\n")
-        #expect(event.kind == .turnEnded(awaitsReply: true, liveSubagentCount: 0))
+        #expect(event.kind == .turnEnded(awaitsReply: true, liveBackgroundTaskCount: 0))
     }
 
     @Test("REAL REPRO: the transcript lags at Stop; the question is detected from last_assistant_message (#39)")
@@ -465,7 +488,7 @@ struct ClaudeCodeAdapterTests {
             """.utf8)
 
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
-        #expect(event.kind == .turnEnded(awaitsReply: true, liveSubagentCount: 0))
+        #expect(event.kind == .turnEnded(awaitsReply: true, liveBackgroundTaskCount: 0))
         // And the authoritative final text wins over the stale transcript, so
         // the Peek shows the real question (« projet · attend : "…?" »).
         #expect(event.summary?.text == "I can target Postgres or SQLite. Which do you want?")
@@ -495,57 +518,91 @@ struct ClaudeCodeAdapterTests {
             """.utf8)
 
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
-        #expect(event.kind == .turnEnded(awaitsReply: true, liveSubagentCount: 0))
+        #expect(event.kind == .turnEnded(awaitsReply: true, liveBackgroundTaskCount: 0))
         #expect(event.summary?.text == "Everything is wired. Ship it?")
         // Structured facts still come from the transcript.
         #expect(event.summary?.todosDone == 1)
         #expect(event.summary?.todosTotal == 1)
     }
 
-    @Test("A Stop with a live Sous-agent in background_tasks reports liveSubagentCount 1 (#48)")
+    @Test("A Stop with a live Sous-agent in background_tasks reports liveBackgroundTaskCount 1 (#48)")
     func stopReadsLiveSubagentFromBackgroundTasks() throws {
         let event = try #require(
             ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stopWithLiveSubagent))
 
         #expect(event.sessionID == "abc123")
         // The constat gates on the count; the crons entry is NOT a subagent.
-        #expect(event.kind == .turnEnded(awaitsReply: false, liveSubagentCount: 1))
+        #expect(event.kind == .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 1))
     }
 
-    @Test("A Stop with an empty background_tasks reports liveSubagentCount 0 (#48)")
+    @Test("A Stop with a live workflow in background_tasks gates the turn too (#79)")
+    func stopReadsLiveWorkflowFromBackgroundTasks() throws {
+        // Regression #79: the old `type == "subagent"` filter dropped this
+        // entry, resolving the Session to "terminée" while the workflow ran.
+        let event = try #require(
+            ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stopWithLiveWorkflow))
+
+        #expect(event.kind == .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 1))
+    }
+
+    @Test("A Stop with an empty background_tasks reports liveBackgroundTaskCount 0 (#48)")
     func stopWithEmptyBackgroundTasksReportsZero() throws {
         let event = try #require(
             ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stopWithNoLiveSubagent))
 
-        #expect(event.kind == .turnEnded(awaitsReply: false, liveSubagentCount: 0))
+        #expect(event.kind == .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0))
     }
 
-    @Test("liveSubagentCount ignores non-subagent entries and blank ids (#48)")
-    func liveSubagentCountFiltersByTypeAndId() {
-        // A crons-style entry (no type), a foreign type, and a blank id must all
-        // be ignored — only genuine Sous-agents count.
+    @Test("The gate counts every background_tasks entry with an id, whatever its type (#79)")
+    func gateCountsEveryEntryWithAnIdWhateverItsType() {
+        // ADR-0008 amendment 2026-07-20: no type allow-list. A subagent, a
+        // shell task, an unknown future type, even a typeless entry all count —
+        // only a blank or missing id disqualifies an entry.
         let payload = Data("""
             {
               "session_id": "abc123",
               "hook_event_name": "Stop",
               "last_assistant_message": "Fait.",
               "background_tasks": [
-                { "id": "cron-1", "schedule": "0 9 * * *" },
-                { "id": "x", "type": "other", "status": "running" },
+                { "id": "a52ecbfbd42e9f2a5", "type": "subagent", "status": "running" },
+                { "id": "sh-1", "type": "shell", "status": "running", "command": "sleep 60" },
+                { "id": "fut-1", "type": "some_future_type", "status": "running" },
+                { "id": "untyped-1", "status": "running" },
                 { "id": "", "type": "subagent", "status": "running" },
-                { "id": "a52ecbfbd42e9f2a5", "type": "subagent", "status": "running" }
+                { "type": "workflow", "status": "running" }
               ]
             }
             """.utf8)
 
-        #expect(ClaudeCodeAdapter.liveSubagentCount(fromHookPayload: payload) == 1)
+        #expect(ClaudeCodeAdapter.liveBackgroundTaskCount(fromHookPayload: payload) == 4)
     }
 
-    @Test("A Stop with no background_tasks field at all reports liveSubagentCount 0 (#48)")
+    @Test("session_crons alone never feeds the gate — the turn resolves ended (#79)")
+    func sessionCronsAloneNeverFeedTheGate() throws {
+        // Invariant (ADR-0008, unchanged by the #79 widening): crons live in
+        // the SEPARATE `session_crons` field — a Stop with crons but an empty
+        // `background_tasks` is a genuinely finished turn.
+        let payload = Data("""
+            {
+              "session_id": "abc123",
+              "hook_event_name": "Stop",
+              "last_assistant_message": "Fait.",
+              "background_tasks": [],
+              "session_crons": [
+                { "id": "cron-1", "schedule": "0 9 * * *", "recurring": true, "prompt": "check CI" }
+              ]
+            }
+            """.utf8)
+
+        let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: payload))
+        #expect(event.kind == .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0))
+    }
+
+    @Test("A Stop with no background_tasks field at all reports liveBackgroundTaskCount 0 (#48)")
     func stopWithoutBackgroundTasksFieldReportsZero() throws {
         // Older builds omit the field; the turn resolves as a plain constat.
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))
-        #expect(event.kind == .turnEnded(awaitsReply: false, liveSubagentCount: 0))
+        #expect(event.kind == .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0))
     }
 
     @Test("Tool events fired inside a subagent (agent_id present) are ignored")
@@ -789,7 +846,7 @@ struct ClaudeCodeAdapterTests {
     func unreadableTranscriptLeavesTitleNil() throws {
         // Fixtures.stop points at a path that does not exist here.
         let event = try #require(ClaudeCodeAdapter.event(fromHookPayload: Fixtures.stop))
-        #expect(event.kind == .turnEnded(awaitsReply: false, liveSubagentCount: 0))
+        #expect(event.kind == .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0))
         #expect(event.title == nil)
     }
 
