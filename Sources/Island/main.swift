@@ -89,22 +89,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.controller = controller
                 await controller.activate()
 
-                // Reveal gesture (issue #53): a global mouse monitor watches for
-                // the cursor pinned to the top-centre edge and asks the pure
-                // `shouldReveal` whether to deploy the Étendu — a thin shell that
-                // holds no logic of its own. `.mouseMoved` global events are
-                // delivered on the main thread, so we stay MainActor-isolated.
+                // Reveal + geometric recede (issues #53, #60): a global mouse
+                // monitor watches the cursor and asks the pure `shouldReveal` /
+                // `shouldRecede` whether to deploy or fold the Étendu — a thin
+                // shell that holds no logic of its own. The recede fallback folds
+                // the panel when the cursor leaves the reveal band without ever
+                // hovering the panel (the native hover-off never fires there,
+                // since the panel deploys around the cursor at the edge).
+                // `.mouseMoved` global events are delivered on the main thread, so
+                // we stay MainActor-isolated.
                 self.revealMonitor = NSEvent.addGlobalMonitorForEvents(
                     matching: .mouseMoved
                 ) { [weak controller] _ in
                     MainActor.assumeIsolated {
                         guard let controller, let screen = NSScreen.main else { return }
+                        let location = NSEvent.mouseLocation
                         if IslandController.shouldReveal(
-                            at: NSEvent.mouseLocation,
+                            at: location,
                             in: screen.frame,
                             sessionCount: store.sessions.count
                         ) {
                             controller.reveal()
+                        } else if IslandController.shouldRecede(at: location, in: screen.frame) {
+                            controller.recedeIfClearOfPanel()
                         }
                     }
                 }
