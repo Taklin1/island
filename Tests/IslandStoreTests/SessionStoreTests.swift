@@ -45,7 +45,7 @@ struct SessionStoreTests {
         #expect(store.sessions[0].currentTool == nil)
         #expect(store.sessions[0].state == .running)
 
-        apply(.turnEnded(awaitsReply: false, liveSubagentCount: 0))
+        apply(.turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0))
         #expect(store.sessions[0].state == .ended)
         #expect(store.sessions[0].currentTool == nil)
         #expect(store.sessions[0].turnStartedAt == nil)
@@ -215,7 +215,7 @@ struct SessionStoreTests {
         // A finished turn carries no live question either (#26 mirror).
         stashQuestion()
         store.apply(AgentEvent(
-            sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0),
+            sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0),
             agent: "claude-code"))
         #expect(store.sessions[0].questionStash == nil)
 
@@ -336,7 +336,7 @@ struct SessionStoreTests {
 
         enterPermissionWait()
         store.apply(AgentEvent(
-            sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0),
+            sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0),
             agent: "claude-code"))
         #expect(store.sessions[0].waitingMessage == nil)
     }
@@ -368,7 +368,7 @@ struct SessionStoreTests {
 
         enterQuestionWait()
         store.apply(AgentEvent(
-            sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0),
+            sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0),
             agent: "claude-code"))
         #expect(store.sessions[0].pendingQuestion == nil)
     }
@@ -394,7 +394,7 @@ struct SessionStoreTests {
     @Test("A finished turn awaits Acknowledgement; hovering the Island acknowledges every Session")
     func hoverAcknowledgesAllSessions() {
         let store = SessionStore()
-        store.apply(AgentEvent(sessionID: "done1", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0), agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "done1", kind: .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0), agent: "claude-code"))
         store.apply(AgentEvent(sessionID: "wait1", kind: .waitingForUser(message: nil), agent: "claude-code"))
 
         let allPending = store.sessions.allSatisfy { $0.needsAcknowledgement }
@@ -412,7 +412,7 @@ struct SessionStoreTests {
     @Test("Acknowledging one Session leaves the others pending")
     func acknowledgeSingleSession() {
         let store = SessionStore()
-        store.apply(AgentEvent(sessionID: "done1", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0), agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "done1", kind: .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0), agent: "claude-code"))
         store.apply(AgentEvent(sessionID: "wait1", kind: .waitingForUser(message: nil), agent: "claude-code"))
 
         store.acknowledge(sessionID: "wait1")
@@ -425,7 +425,7 @@ struct SessionStoreTests {
     func terminalFocusAcknowledgesItsSessions() {
         let store = SessionStore()
         store.apply(AgentEvent(
-            sessionID: "ghosttySession", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0),
+            sessionID: "ghosttySession", kind: .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0),
             terminal: "ghostty", agent: "claude-code"
         ))
         store.apply(AgentEvent(
@@ -467,14 +467,14 @@ struct SessionStoreTests {
         )
 
         store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Fix it"), agent: "claude-code"))
-        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0), agent: "claude-code", summary: summary))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0), agent: "claude-code", summary: summary))
         #expect(store.sessions.first?.lastSummary == summary)
 
         // A turn without a readable transcript falls back to no summary…
         store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Again"), agent: "claude-code"))
         // …and the stale summary never survives into the new turn.
         #expect(store.sessions.first?.lastSummary == nil)
-        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0), agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0), agent: "claude-code"))
         #expect(store.sessions.first?.lastSummary == nil)
         #expect(store.sessions.first?.state == .ended)
     }
@@ -544,10 +544,10 @@ struct SessionStoreTests {
         // The main turn ends on a constat while a Sous-agent still runs: the
         // Stop's background_tasks reports 1, read straight from the payload —
         // race-free, no need to wait for the subagent's own hooks.
-        apply(.turnEnded(awaitsReply: false, liveSubagentCount: 1))
+        apply(.turnEnded(awaitsReply: false, liveBackgroundTaskCount: 1))
         #expect(store.sessions[0].state == .running) // never "terminée" (#48)
         #expect(store.sessions[0].needsAcknowledgement == false)
-        #expect(store.sessions[0].activeSubagentCount == 1)
+        #expect(store.sessions[0].activeBackgroundTaskCount == 1)
     }
 
     @Test("The next Stop reporting zero live Sous-agents ends the turn, green (#48)")
@@ -561,17 +561,17 @@ struct SessionStoreTests {
         }
 
         apply(.promptSubmitted(prompt: "Explore"))
-        apply(.turnEnded(awaitsReply: false, liveSubagentCount: 1)) // gated → running
+        apply(.turnEnded(awaitsReply: false, liveBackgroundTaskCount: 1)) // gated → running
         #expect(store.sessions[0].state == .running)
         #expect(store.sessions[0].needsAcknowledgement == false)
 
         // The Sous-agent finished ⇒ a fresh main turn ⇒ a fresh Stop whose
         // background_tasks is now empty: only now is the turn truly done.
-        apply(.turnEnded(awaitsReply: false, liveSubagentCount: 0), summary: summary)
+        apply(.turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0), summary: summary)
         #expect(store.sessions[0].state == .ended)
         #expect(store.sessions[0].needsAcknowledgement)
         #expect(store.sessions[0].lastSummary == summary)
-        #expect(store.sessions[0].activeSubagentCount == 0)
+        #expect(store.sessions[0].activeBackgroundTaskCount == 0)
     }
 
     @Test("Several concurrent Sous-agents: running until a Stop reports zero (#48)")
@@ -582,22 +582,22 @@ struct SessionStoreTests {
         }
 
         apply(.promptSubmitted(prompt: "Go"))
-        apply(.turnEnded(awaitsReply: false, liveSubagentCount: 3)) // 3 live → running
+        apply(.turnEnded(awaitsReply: false, liveBackgroundTaskCount: 3)) // 3 live → running
         #expect(store.sessions[0].state == .running)
-        #expect(store.sessions[0].activeSubagentCount == 3)
+        #expect(store.sessions[0].activeBackgroundTaskCount == 3)
 
-        apply(.turnEnded(awaitsReply: false, liveSubagentCount: 1)) // some finished
+        apply(.turnEnded(awaitsReply: false, liveBackgroundTaskCount: 1)) // some finished
         #expect(store.sessions[0].state == .running) // one still running
-        #expect(store.sessions[0].activeSubagentCount == 1)
+        #expect(store.sessions[0].activeBackgroundTaskCount == 1)
 
-        apply(.turnEnded(awaitsReply: false, liveSubagentCount: 0)) // last one gone
+        apply(.turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0)) // last one gone
         #expect(store.sessions[0].state == .ended)
     }
 
     @Test("A blocking notification never resurrects a turn that already ended (root cause B)")
     func waitingNeverResurrectsEndedTurn() {
         let store = SessionStore()
-        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0), agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0), agent: "claude-code"))
         #expect(store.sessions[0].state == .ended)
 
         // A stray notification reaching the store must not turn "terminé" into "?".
@@ -615,7 +615,7 @@ struct SessionStoreTests {
         }
 
         apply(.promptSubmitted(prompt: "Go"))
-        apply(.turnEnded(awaitsReply: false, liveSubagentCount: 1)) // gated → running
+        apply(.turnEnded(awaitsReply: false, liveBackgroundTaskCount: 1)) // gated → running
         apply(.waitingForUser(message: "May I?")) // a genuine permission block
 
         #expect(store.sessions[0].state == .waiting)
@@ -633,7 +633,7 @@ struct SessionStoreTests {
         apply(.waitingForUser(message: "May I?"))
         #expect(store.sessions[0].state == .waiting)
 
-        apply(.turnEnded(awaitsReply: false, liveSubagentCount: 0))
+        apply(.turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0))
         #expect(store.sessions[0].state == .ended) // the turn end clears the "?"
     }
 
@@ -645,7 +645,7 @@ struct SessionStoreTests {
         let question = TurnSummary(text: "Which database should I target, Postgres or SQLite?")
 
         store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Add persistence"), agent: "claude-code"))
-        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: true, liveSubagentCount: 0), agent: "claude-code", summary: question))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: true, liveBackgroundTaskCount: 0), agent: "claude-code", summary: question))
 
         #expect(store.sessions[0].state == .waiting)
         #expect(store.sessions[0].needsAcknowledgement)
@@ -659,7 +659,7 @@ struct SessionStoreTests {
         let store = SessionStore()
 
         store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Ship it"), agent: "claude-code"))
-        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0), agent: "claude-code"))
+        store.apply(AgentEvent(sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0), agent: "claude-code"))
 
         #expect(store.sessions[0].state == .ended)
         #expect(store.sessions[0].needsAcknowledgement)
@@ -677,7 +677,7 @@ struct SessionStoreTests {
         // The main turn ends on a question while a Sous-agent still runs: the
         // question wins immediately (orange), the gate only ever holds back the
         // green of a constat (Q5 corrects the old deferred behavior, #48).
-        apply(.turnEnded(awaitsReply: true, liveSubagentCount: 1), summary: question)
+        apply(.turnEnded(awaitsReply: true, liveBackgroundTaskCount: 1), summary: question)
         #expect(store.sessions[0].state == .waiting)
         #expect(store.sessions[0].needsAcknowledgement)
         #expect(store.sessions[0].turnStartedAt == nil)
@@ -692,7 +692,7 @@ struct SessionStoreTests {
         }
 
         apply(.promptSubmitted(prompt: "Add persistence"))
-        apply(.turnEnded(awaitsReply: true, liveSubagentCount: 0), summary: TurnSummary(text: "Postgres or SQLite?"))
+        apply(.turnEnded(awaitsReply: true, liveBackgroundTaskCount: 0), summary: TurnSummary(text: "Postgres or SQLite?"))
         #expect(store.sessions[0].state == .waiting)
 
         // The user answers: a fresh turn begins and the previous question is stale.
@@ -701,7 +701,7 @@ struct SessionStoreTests {
         #expect(store.sessions[0].lastSummary == nil)
 
         // This turn ends on a constat: green, not a leftover orange.
-        apply(.turnEnded(awaitsReply: false, liveSubagentCount: 0))
+        apply(.turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0))
         #expect(store.sessions[0].state == .ended)
     }
 
@@ -741,7 +741,7 @@ struct SessionStoreTests {
         let store = SessionStore(sweepInterval: nil)
         // An ended Session: a stray/late tap must not turn it back to 'en cours'.
         store.apply(AgentEvent(
-            sessionID: "done", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0),
+            sessionID: "done", kind: .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0),
             terminal: "ghostty", agent: "claude-code"))
         #expect(store.sessions[0].state == .ended)
 

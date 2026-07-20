@@ -105,16 +105,18 @@ public enum AgentEventKind: Equatable, Sendable {
     /// subagent still live (Q5, question wins). The adapter only *detects*; it
     /// never emits `.waitingForUser` directly, which would bypass the gate.
     ///
-    /// `liveSubagentCount` is the number of **Sous-agents still running at this
-    /// Stop**, read from the hook's `background_tasks` list (issue #48,
-    /// ADR-0008 amended): entries with `type == "subagent"` and a non-empty
-    /// `id`. On a constat (`awaitsReply == false`), a non-zero count keeps the
-    /// Session `.running` (the gate) — it becomes `.ended` only once a later
-    /// Stop reports zero. This is race-free: the count comes from the Stop
-    /// payload itself, so it never depends on a subagent's own hooks landing
-    /// first, and no clock tick is needed (every subagent completion triggers a
-    /// fresh main turn ⇒ a fresh Stop that re-evaluates the list).
-    case turnEnded(awaitsReply: Bool, liveSubagentCount: Int)
+    /// `liveBackgroundTaskCount` is the number of **background tasks still
+    /// running at this Stop** — Sous-agents, workflows, shell tasks, whatever
+    /// their type — read from the hook's `background_tasks` list (issue #48,
+    /// widened by #79 / ADR-0008 amended): every entry with a non-empty `id`,
+    /// no type allow-list. On a constat (`awaitsReply == false`), a non-zero
+    /// count keeps the Session `.running` (the gate) — it becomes `.ended`
+    /// only once a later Stop reports zero. This is race-free: the count comes
+    /// from the Stop payload itself, so it never depends on a background
+    /// task's own hooks landing first, and no clock tick is needed (every
+    /// background-task completion triggers a fresh main turn ⇒ a fresh Stop
+    /// that re-evaluates the list).
+    case turnEnded(awaitsReply: Bool, liveBackgroundTaskCount: Int)
     /// The agent is blocked on the user (permission request or question).
     case waitingForUser(message: String?)
     /// The Session closed for good: it disappears from the Island.

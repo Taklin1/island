@@ -506,13 +506,14 @@ public final class IslandController {
                 if let tool = session.currentTool {
                     parts += "(\(tool))"
                 }
-                // Live Sous-agents (#48), read from the Stop's background_tasks:
-                // a Session with one is never terminée. Surfaced on stdout so the
-                // agentic FP can assert the count was parsed (state=running +
-                // ×Nsub proves the gate engaged), the production trace of the
-                // decoded count — distinct from any capture instrumentation.
-                if session.activeSubagentCount > 0 {
-                    parts += " ×\(session.activeSubagentCount)sub"
+                // Live background tasks (#48, widened by #79), read from the
+                // Stop's background_tasks: a Session with one is never
+                // terminée. Surfaced on stdout so the agentic FP can assert the
+                // count was parsed (state=running + ×Nbg proves the gate
+                // engaged), the production trace of the decoded count —
+                // distinct from any capture instrumentation.
+                if session.activeBackgroundTaskCount > 0 {
+                    parts += " ×\(session.activeBackgroundTaskCount)bg"
                 }
                 if session.lastSummary != nil {
                     parts += "+summary"
@@ -759,10 +760,10 @@ struct SessionCardView: View {
                     .foregroundStyle(.orange)
                     .lineLimit(1)
             }
-            // Discreet Sous-agent tally (issue #48, Q6): "⋯ N sous-agents en
-            // cours" — shown only while at least one runs.
-            if let subagents = card.subagentsLabel {
-                Text("⋯ \(subagents)")
+            // Discreet background-task tally (issue #48/#79, Q6): "⋯ N tâches
+            // de fond en cours" — shown only while at least one runs.
+            if let backgroundTasks = card.backgroundTasksLabel {
+                Text("⋯ \(backgroundTasks)")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

@@ -31,12 +31,13 @@ public struct Session: Identifiable, Equatable, Sendable {
     /// True while a marking event (waiting / turn ended) has not been
     /// Acknowledged by the user. Drives the Liseré.
     public var needsAcknowledgement: Bool
-    /// Sous-agents still running under this Session at its last Stop (issues
-    /// #31/#48). Read from the Stop's `background_tasks` list (ADR-0008
-    /// amended): a Session with a live Sous-agent is never shown "terminée" —
-    /// its turn is not done — and the count feeds the discreet tally on the
+    /// Background tasks (Sous-agents, workflows, shell tasks…) still running
+    /// under this Session at its last Stop (issues #31/#48, widened by #79).
+    /// Read from the Stop's `background_tasks` list (ADR-0008 amended): a
+    /// Session with a live background task is never shown "terminée" — its
+    /// turn is not done — and the count feeds the discreet tally on the
     /// Extended card (Q6). Reset to zero when a new turn starts.
-    public var activeSubagentCount: Int
+    public var activeBackgroundTaskCount: Int
     /// The AskUserQuestion this Session is blocked on (issue #26), promoted
     /// from ``questionStash`` — the question the tool's own PreToolUse payload
     /// carried (#77). Set only while `.waiting` on an extractable question;
@@ -94,7 +95,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         lastSummary: TurnSummary? = nil,
         lastActivityAt: Date = Date(),
         needsAcknowledgement: Bool = false,
-        activeSubagentCount: Int = 0,
+        activeBackgroundTaskCount: Int = 0,
         pendingQuestion: PendingQuestion? = nil,
         waitingMessage: String? = nil,
         questionStash: QuestionStash? = nil
@@ -111,7 +112,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         self.lastSummary = lastSummary
         self.lastActivityAt = lastActivityAt
         self.needsAcknowledgement = needsAcknowledgement
-        self.activeSubagentCount = activeSubagentCount
+        self.activeBackgroundTaskCount = activeBackgroundTaskCount
         self.pendingQuestion = pendingQuestion
         self.waitingMessage = waitingMessage
         self.questionStash = questionStash
@@ -212,10 +213,10 @@ public final class SessionStore: ObservableObject {
             session.turnStartedAt = timestamp
             session.needsAcknowledgement = false
             session.lastSummary = nil
-            // A new prompt is a fresh turn: any Sous-agent tally from the
+            // A new prompt is a fresh turn: any background-task tally from the
             // previous turn's Stop is stale (#48). The next Stop re-reads the
             // live list from `background_tasks`.
-            session.activeSubagentCount = 0
+            session.activeBackgroundTaskCount = 0
             // A resolved AskUserQuestion never lingers into the next turn (#26);
             // nor does a buttonless block's ask (#29) or a stashed question (#77).
             session.pendingQuestion = nil
@@ -249,19 +250,21 @@ public final class SessionStore: ObservableObject {
                 session.pendingQuestion = nil
                 session.waitingMessage = nil
             }
-        case let .turnEnded(awaitsReply, liveSubagentCount):
-            // The main turn's Stop fired, carrying the live Sous-agent tally
-            // read from `background_tasks` at this exact Stop (#48, ADR-0008
-            // amended). Resolution, race-free (the count is in the payload):
-            //   • a question wins immediately — orange, even with a Sous-agent
-            //     still live (Q5, #39 non-regression);
-            //   • otherwise a constat stays "en cours" while a Sous-agent runs
-            //     (the gate) and only ends once a later Stop reports zero.
-            // Every Sous-agent completion injects a fresh main turn ⇒ a fresh
-            // Stop, so the gate always re-resolves on an event — no clock tick.
+        case let .turnEnded(awaitsReply, liveBackgroundTaskCount):
+            // The main turn's Stop fired, carrying the live background-task
+            // tally read from `background_tasks` at this exact Stop (#48,
+            // widened by #79 — ADR-0008 amended). Resolution, race-free (the
+            // count is in the payload):
+            //   • a question wins immediately — orange, even with a background
+            //     task still live (Q5, #39 non-regression);
+            //   • otherwise a constat stays "en cours" while a background task
+            //     runs (the gate) and only ends once a later Stop reports zero.
+            // Every background-task completion injects a fresh main turn ⇒ a
+            // fresh Stop, so the gate always re-resolves on an event — no
+            // clock tick.
             session.currentTool = nil
             session.lastSummary = event.summary
-            session.activeSubagentCount = liveSubagentCount
+            session.activeBackgroundTaskCount = liveBackgroundTaskCount
             // A turn ending on a question (#39/ADR-0006) resolves to waiting via
             // its prose in `lastSummary`, never through a structured
             // AskUserQuestion tool — so any pending one is cleared here whatever
@@ -275,7 +278,7 @@ public final class SessionStore: ObservableObject {
                 session.state = .waiting
                 session.turnStartedAt = nil
                 session.needsAcknowledgement = true
-            } else if liveSubagentCount > 0 {
+            } else if liveBackgroundTaskCount > 0 {
                 session.state = .running
             } else {
                 session.state = .ended

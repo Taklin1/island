@@ -246,13 +246,45 @@ struct LocalServerTests {
         // Main Stop fires while a Sous-agent is still running (constat): the gate
         // keeps it running, read straight from background_tasks — race-free.
         _ = try await harness.postHook(hook("Stop", extra: liveSubagent), token: harness.token)
-        try await harness.waitUntil { $0.sessions.first?.activeSubagentCount == 1 }
+        try await harness.waitUntil { $0.sessions.first?.activeBackgroundTaskCount == 1 }
         #expect(harness.store.sessions[0].state == .running) // never terminée yet
 
         // The Sous-agent finished ⇒ a fresh Stop reports an empty list: ended.
         _ = try await harness.postHook(hook("Stop", extra: noSubagent), token: harness.token)
         try await harness.waitUntil { $0.sessions.first?.state == .ended }
-        #expect(harness.store.sessions[0].activeSubagentCount == 0)
+        #expect(harness.store.sessions[0].activeBackgroundTaskCount == 0)
+    }
+
+    @Test("A Session with a live workflow (background_tasks) is never 'terminée' until zero (#79)")
+    func workflowInFlightNeverShowsTerminatedEndToEnd() async throws {
+        let harness = try await ServerHarness()
+        func hook(_ eventName: String, extra: String = "") -> String {
+            """
+            {
+              "session_id": "wf-parent",
+              "transcript_path": "/tmp/wf-parent.jsonl",
+              "cwd": "/Users/loic/Documents/island",
+              "hook_event_name": "\(eventName)"\(extra)
+            }
+            """
+        }
+        // Regression #79: a live Workflow rides background_tasks with
+        // `type: "workflow"` (+ its name) — the old subagent-only filter let
+        // this Stop flip the card green while the workflow was still running.
+        let liveWorkflow = #", "last_assistant_message": "Le workflow tourne.", "background_tasks": [{"id": "wf_a1b2c3", "type": "workflow", "status": "running", "name": "review-changes"}]"#
+        let noTask = #", "last_assistant_message": "Workflow terminé.", "background_tasks": []"#
+
+        _ = try await harness.postHook(hook("UserPromptSubmit", extra: #", "prompt": "Review via workflow""#), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .running }
+
+        _ = try await harness.postHook(hook("Stop", extra: liveWorkflow), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.activeBackgroundTaskCount == 1 }
+        #expect(harness.store.sessions[0].state == .running) // never terminée yet
+
+        // The workflow completed ⇒ a fresh Stop reports an empty list: ended.
+        _ = try await harness.postHook(hook("Stop", extra: noTask), token: harness.token)
+        try await harness.waitUntil { $0.sessions.first?.state == .ended }
+        #expect(harness.store.sessions[0].activeBackgroundTaskCount == 0)
     }
 
     // MARK: - A turn ending on a question is "attend", not "terminé" (issue #39)
