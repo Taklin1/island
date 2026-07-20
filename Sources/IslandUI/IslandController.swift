@@ -46,7 +46,7 @@ public final class IslandController {
     /// transcript lives behind the adapter, the controller only triggers.
     private let refreshTitles: (() -> Void)?
     private let viewModel = IslandViewModel()
-    private var notch: DynamicNotch<ExpandedContentView, CompactLeadingView, CompactTrailingView>?
+    private var notch: DynamicNotch<ExpandedContentView, EmptyView, EmptyView>?
     private var cancellables: Set<AnyCancellable> = []
     private var knownEndedSessionIDs: Set<String> = []
     private var knownWaitingSessionIDs: Set<String> = []
@@ -91,15 +91,15 @@ public final class IslandController {
         let viewModel = viewModel
         // `.floating` (ADR-0007): the Island is masqué by default on a notchless
         // Mac. In DynamicNotchKit the floating style *hides* the panel on
-        // `compact()`, so there is no always-visible micro-bar; the panel only
-        // exists during a Peek or a Reveal. Its `.keepVisible` hover keeps the
-        // Étendu open while the pointer is on it.
+        // `compact()`, so there is no always-visible micro-bar and the compact
+        // views would never render — the panel only exists during a Peek or a
+        // Reveal. The compact-less initializer disables both compact slots
+        // (issue #55). Its `.keepVisible` hover keeps the Étendu open while the
+        // pointer is on it.
         let notch = DynamicNotch(
             hoverBehavior: [.keepVisible],
             style: .floating,
-            expanded: { ExpandedContentView(model: viewModel) },
-            compactLeading: { CompactLeadingView() },
-            compactTrailing: { CompactTrailingView(model: viewModel) }
+            expanded: { ExpandedContentView(model: viewModel) }
         )
         self.notch = notch
         // No initial surface: Masqué is the resting state.
@@ -153,11 +153,8 @@ public final class IslandController {
     }
 
     private func sessionsDidChange(_ sessions: [Session]) {
-        viewModel.compactSprites = Self.compactSprites(for: sessions)
-        viewModel.compactTone = Self.compactTone(for: sessions)
         viewModel.cards = sessions.map { self.card(for: $0) }
         log("sessions: \(Self.sessionsTrace(for: sessions))")
-        log("sprites: \(Self.spritesTrace(for: viewModel.compactSprites))")
 
         let newlyEnded = sessions.filter {
             $0.state == .ended && !knownEndedSessionIDs.contains($0.id)
@@ -309,6 +306,7 @@ public final class IslandController {
     private func peek(for session: Session) {
         guard mode != .expanded else { return }
         viewModel.peekText = Self.peekText(for: session)
+        viewModel.peekAnimation = Self.peekAnimation(for: session)
         viewModel.peekSessionID = session.id
         // A Peek shows the peek text, not the cards, whatever the last Reveal left.
         viewModel.showCards = false
@@ -362,15 +360,6 @@ public final class IslandController {
             .joined(separator: " ")
     }
 
-    /// Tint of the compact bar: mirrors the most pressing Session state.
-    enum CompactTone: Equatable {
-        case neutral
-        /// A Session waits on the user (orange, wins over everything).
-        case waiting
-        /// A Session finished its turn (green).
-        case finished
-    }
-
     /// What the Peek announces for a marking event on a Session: the waiting
     /// call to action, or the first line of the turn summary (ADR-0002, falls
     /// back to the bare "terminé" when the transcript had nothing usable).
@@ -386,45 +375,24 @@ public final class IslandController {
             )
     }
 
-    /// Orange when a Session waits, green when one finished, neutral
-    /// otherwise — same priority as the Liseré.
-    static func compactTone(for sessions: [Session]) -> CompactTone {
-        if sessions.contains(where: { $0.state == .waiting }) { return .waiting }
-        if sessions.contains(where: { $0.state == .ended }) { return .finished }
-        return .neutral
-    }
-
-    /// One Sprite per Session (issue #11) — the compact bar mirrors the
-    /// session list, each state encoded by the bot's animation.
-    static func compactSprites(for sessions: [Session]) -> [CompactSprite] {
-        sessions.map {
-            CompactSprite(id: $0.id, animation: SpriteAnimation.animation(for: $0.state))
-        }
-    }
-
-    /// Stdout trace of the compact Sprites, so agentic tests can assert the
-    /// state → animation mapping without looking at pixels.
-    static func spritesTrace(for sprites: [CompactSprite]) -> String {
-        guard !sprites.isEmpty else { return "none" }
-        return sprites.map(\.animation.rawValue).joined(separator: " ")
+    /// The Sprite the Peek shows for a marking event (issue #55): the Session's
+    /// mascot, its animation encoding the state through the same mapping the
+    /// Extended cards use, so the transient Peek and the cards speak the same
+    /// visual language.
+    static func peekAnimation(for session: Session) -> SpriteAnimation {
+        SpriteAnimation.animation(for: session.state)
     }
 }
 
-/// One Sprite slot of the compact bar: which Session, which animation.
-struct CompactSprite: Identifiable, Equatable {
-    let id: String
-    let animation: SpriteAnimation
-}
-
-/// Observable UI state: what the compact bar and the expanded content show.
+/// Observable UI state: what the Peek and the expanded content show.
 @MainActor
 final class IslandViewModel: ObservableObject {
     @Published var peekText: String = ""
+    /// Animation of the Peek's Sprite (issue #55): the mascot of the Session the
+    /// Peek announces, its animation encoding the state.
+    @Published var peekAnimation: SpriteAnimation = .working
     /// Session announced by the current Peek: clicking the Peek activates it.
     @Published var peekSessionID: String?
-    /// One pixel-art Sprite per live Session (issue #11).
-    @Published var compactSprites: [CompactSprite] = []
-    @Published var compactTone: IslandController.CompactTone = .neutral
     /// True while the Island is expanded by hover (Extended mode, cards);
     /// false when an expansion shows a Peek.
     @Published var showCards: Bool = false
@@ -566,57 +534,28 @@ struct SessionCardView: View {
     }
 }
 
+/// The transient Peek (issue #55): the Session's Sprite — its animation encodes
+/// the state (green check when finished, blinking question when waiting) — next
+/// to the announcement text, the same visual language as the Extended cards.
+/// Stays clickable (click-to-focus, #10) over the whole surface.
 struct PeekView: View {
     @ObservedObject var model: IslandViewModel
 
     var body: some View {
-        Text(model.peekText)
-            .font(.headline)
-            .foregroundStyle(.white)
-            .lineLimit(1)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if let sessionID = model.peekSessionID {
-                    model.activateSession?(sessionID)
-                }
-            }
-    }
-}
-
-/// The isle logo, pixel-art like the bots (validated with planche C).
-struct CompactLeadingView: View {
-    var body: some View {
-        SpriteView(sheet: .isle, imageName: "isle", animation: .working)
-    }
-}
-
-/// One animated Sprite per Session (issue #11). The sprites carry the state
-/// tints themselves (green check, orange question mark); the #8 Compact tone
-/// remains as a soft halo behind the row, same priority as the Liseré.
-struct CompactTrailingView: View {
-    @ObservedObject var model: IslandViewModel
-
-    private var glow: Color {
-        switch model.compactTone {
-        case .neutral: .clear
-        case .waiting: .orange
-        case .finished: .green
+        HStack(spacing: 8) {
+            SpriteView(sheet: .bot, imageName: "bot", animation: model.peekAnimation)
+            Text(model.peekText)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .lineLimit(1)
         }
-    }
-
-    var body: some View {
-        HStack(spacing: 3) {
-            if model.compactSprites.isEmpty {
-                Text("–")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white)
-            }
-            ForEach(model.compactSprites) { sprite in
-                SpriteView(sheet: .bot, imageName: "bot", animation: sprite.animation)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if let sessionID = model.peekSessionID {
+                model.activateSession?(sessionID)
             }
         }
-        .shadow(color: glow, radius: 3)
     }
 }

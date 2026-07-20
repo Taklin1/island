@@ -18,19 +18,6 @@ struct WaitingAndClickTests {
         #expect(card.animation == .question)
     }
 
-    @Test("The compact bar tone mirrors the Sessions: orange when one waits, over green")
-    func compactToneReflectsSessions() {
-        let waiting = Session(id: "w", state: .waiting, agent: "claude-code")
-        let ended = Session(id: "e", state: .ended, agent: "claude-code")
-        let running = Session(id: "r", state: .running, agent: "claude-code")
-
-        #expect(IslandController.compactTone(for: [running]) == .neutral)
-        #expect(IslandController.compactTone(for: [ended, running]) == .finished)
-        // Orange (waiting) always wins over green (finished).
-        #expect(IslandController.compactTone(for: [ended, waiting]) == .waiting)
-        #expect(IslandController.compactTone(for: []) == .neutral)
-    }
-
     @Test("Clicking a card focuses the terminal and acknowledges that Session only")
     func cardClickFocusesAndAcknowledges() {
         let store = SessionStore()

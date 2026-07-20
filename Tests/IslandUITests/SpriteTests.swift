@@ -102,21 +102,6 @@ struct SpriteTests {
         #expect(card(.waiting).animation == .question)
     }
 
-    @Test("The compact bar shows one Sprite per Session, in order")
-    func compactBarShowsOneSpritePerSession() {
-        let sessions = [
-            Session(id: "a", state: .running, agent: "claude-code"),
-            Session(id: "b", state: .idle, agent: "claude-code"),
-            Session(id: "c", state: .waiting, agent: "claude-code"),
-        ]
-
-        let sprites = IslandController.compactSprites(for: sessions)
-
-        #expect(sprites.map(\.id) == ["a", "b", "c"])
-        #expect(sprites.map(\.animation) == [.working, .sleeping, .question])
-        #expect(IslandController.compactSprites(for: []).isEmpty)
-    }
-
     @Test("The embedded sheets match the descriptor's grid")
     func embeddedSheetsMatchTheDescriptorGrid() throws {
         // Bot: one row per animation, one column per frame of the longest loop.
