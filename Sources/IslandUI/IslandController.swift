@@ -497,6 +497,13 @@ public final class IslandController {
                 if session.state == .waiting, let question = session.pendingQuestion {
                     parts += "+question(\(question.options.count))"
                 }
+                // Buttonless wait that surfaced its ask (issue #29): the escalated
+                // permission (or unextractable question) shows a message, not
+                // buttons. The marker lets the FP assert the surfacing state-first.
+                if session.state == .waiting, session.pendingQuestion == nil,
+                    session.waitingMessage != nil {
+                    parts += "+msg"
+                }
                 return parts
             }
             .joined(separator: " ")
@@ -736,6 +743,20 @@ struct SessionCardView: View {
                 Text(context)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
+            }
+            // Buttonless wait (issue #29): an escalated permission prompt (or an
+            // unextractable question, US10) carries no options to inject, so the
+            // card shows the block's ask — WHAT is waiting — instead of buttons.
+            // Display only: the tap degrades to Click-to-focus like any card, and
+            // nothing is ever injected or auto-selected (US7). Mutually exclusive
+            // with the question block below (set only when card.question is nil).
+            if let waitingMessage = card.waitingMessage {
+                Text(waitingMessage)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.95))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
             }
             // AskUserQuestion (issue #26): the question label + one button per
             // option, in transcript order (the number is the 1/2/3 key mapping).

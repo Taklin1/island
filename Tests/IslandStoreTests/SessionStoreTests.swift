@@ -156,6 +156,67 @@ struct SessionStoreTests {
         #expect(store.sessions[0].pendingQuestion == nil)
     }
 
+    @Test("A buttonless permission wait surfaces the Notification message so the card says what blocks (#29)")
+    func waitingWithoutQuestionSurfacesMessage() {
+        let store = SessionStore()
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "Go"), agent: "claude-code"))
+
+        store.apply(AgentEvent(
+            sessionID: "abc123",
+            kind: .waitingForUser(message: "Claude needs your permission to use Bash"),
+            agent: "claude-code"
+        ))
+
+        // An escalated permission prompt carries no extractable options (#29,
+        // spike #25): the human-readable ask rides the block so the buttonless
+        // card still shows WHAT is waiting — display only, no button, no auto
+        // decision (US7). The click keeps degrading to Click-to-focus.
+        #expect(store.sessions[0].pendingQuestion == nil)
+        #expect(store.sessions[0].waitingMessage == "Claude needs your permission to use Bash")
+    }
+
+    @Test("Showing buttons drops the generic message (no redundant text under the question, #29)")
+    func waitingWithQuestionDropsMessage() {
+        let store = SessionStore()
+        let question = PendingQuestion(prompt: "Which?", options: [.init(label: "A"), .init(label: "B")])
+        store.apply(AgentEvent(
+            sessionID: "abc123",
+            kind: .waitingForUser(message: "Claude is asking a question"),
+            agent: "claude-code",
+            question: question))
+
+        #expect(store.sessions[0].pendingQuestion == question)
+        #expect(store.sessions[0].waitingMessage == nil)
+    }
+
+    @Test("A buttonless wait's message never lingers past waiting (#29)")
+    func waitingMessageClearedOnResume() {
+        let store = SessionStore()
+        func enterPermissionWait() {
+            store.apply(AgentEvent(
+                sessionID: "abc123",
+                kind: .waitingForUser(message: "Claude needs your permission to use Bash"),
+                agent: "claude-code"))
+            #expect(store.sessions[0].waitingMessage != nil)
+        }
+
+        // A new prompt, a resumed tool, or a finished turn all leave waiting: the
+        // stale ask must not linger on the card (same lifecycle as pendingQuestion).
+        enterPermissionWait()
+        store.apply(AgentEvent(sessionID: "abc123", kind: .promptSubmitted(prompt: "next"), agent: "claude-code"))
+        #expect(store.sessions[0].waitingMessage == nil)
+
+        enterPermissionWait()
+        store.apply(AgentEvent(sessionID: "abc123", kind: .toolStarted(tool: "Bash"), agent: "claude-code"))
+        #expect(store.sessions[0].waitingMessage == nil)
+
+        enterPermissionWait()
+        store.apply(AgentEvent(
+            sessionID: "abc123", kind: .turnEnded(awaitsReply: false, liveSubagentCount: 0),
+            agent: "claude-code"))
+        #expect(store.sessions[0].waitingMessage == nil)
+    }
+
     @Test("Answering clears the pending question so an old one is never re-shown")
     func answeringClearsPendingQuestion() {
         let store = SessionStore()

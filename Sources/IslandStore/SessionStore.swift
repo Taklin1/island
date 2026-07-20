@@ -42,6 +42,15 @@ public struct Session: Identifiable, Equatable, Sendable {
     /// question; cleared on any transition away from waiting so an answered
     /// question is never re-shown. `nil` = no buttons (Click-to-focus, US10).
     public var pendingQuestion: PendingQuestion?
+    /// The human-readable ask of a *buttonless* block (issue #29): the message
+    /// the blocking Notification carried — e.g. "Claude needs your permission to
+    /// use Bash" for an escalated permission prompt, whose options are not
+    /// extractable (spike #25). Set only while `.waiting` **without** a
+    /// ``pendingQuestion``, so the card can say WHAT is blocking even when it
+    /// shows no buttons; display only, never a decision (US7). Cleared on any
+    /// transition away from waiting, exactly like ``pendingQuestion``. `nil`
+    /// whenever buttons are shown, or the Notification carried no message.
+    public var waitingMessage: String?
 
     /// Human-readable project name: last path component of the cwd.
     public var projectName: String {
@@ -63,7 +72,8 @@ public struct Session: Identifiable, Equatable, Sendable {
         lastActivityAt: Date = Date(),
         needsAcknowledgement: Bool = false,
         activeSubagentCount: Int = 0,
-        pendingQuestion: PendingQuestion? = nil
+        pendingQuestion: PendingQuestion? = nil,
+        waitingMessage: String? = nil
     ) {
         self.id = id
         self.state = state
@@ -79,6 +89,7 @@ public struct Session: Identifiable, Equatable, Sendable {
         self.needsAcknowledgement = needsAcknowledgement
         self.activeSubagentCount = activeSubagentCount
         self.pendingQuestion = pendingQuestion
+        self.waitingMessage = waitingMessage
     }
 }
 
@@ -180,13 +191,16 @@ public final class SessionStore: ObservableObject {
             // previous turn's Stop is stale (#48). The next Stop re-reads the
             // live list from `background_tasks`.
             session.activeSubagentCount = 0
-            // A resolved AskUserQuestion never lingers into the next turn (#26).
+            // A resolved AskUserQuestion never lingers into the next turn (#26);
+            // nor does a buttonless block's ask (#29).
             session.pendingQuestion = nil
+            session.waitingMessage = nil
         case let .toolStarted(tool):
             session.state = .running
             session.currentTool = tool
             session.needsAcknowledgement = false
             session.pendingQuestion = nil
+            session.waitingMessage = nil
             if session.turnStartedAt == nil {
                 session.turnStartedAt = timestamp
             }
@@ -209,7 +223,9 @@ public final class SessionStore: ObservableObject {
             // its prose in `lastSummary`, never through a structured
             // AskUserQuestion tool — so any pending one is cleared here whatever
             // the resolution branch (#26): the Stop path carries no options.
+            // A buttonless block's ask (#29) does not survive the turn's end.
             session.pendingQuestion = nil
+            session.waitingMessage = nil
             if awaitsReply {
                 session.state = .waiting
                 session.turnStartedAt = nil
@@ -221,7 +237,7 @@ public final class SessionStore: ObservableObject {
                 session.turnStartedAt = nil
                 session.needsAcknowledgement = true
             }
-        case .waitingForUser:
+        case let .waitingForUser(message):
             // Root cause B (#31): a genuine block moves the Session to waiting
             // from any live state, but never resurrects a turn that already
             // ended — a real permission/question never follows a finished turn,
@@ -235,6 +251,12 @@ public final class SessionStore: ObservableObject {
                 // clears the Liseré. A stray notification on an ended turn
                 // attaches nothing.
                 session.pendingQuestion = event.question
+                // A buttonless block (permission prompt, or an unextractable
+                // question — US10) keeps the Notification's human-readable ask
+                // so the card can still say WHAT is waiting (issue #29). When
+                // buttons ARE shown the question label is what the card reads,
+                // so the generic message would be redundant → dropped.
+                session.waitingMessage = event.question == nil ? message : nil
             }
         }
 
@@ -299,6 +321,7 @@ public final class SessionStore: ObservableObject {
         let timestamp = now()
         sessions[index].state = .running
         sessions[index].pendingQuestion = nil
+        sessions[index].waitingMessage = nil
         sessions[index].needsAcknowledgement = false
         sessions[index].turnStartedAt = timestamp
         sessions[index].lastActivityAt = timestamp
