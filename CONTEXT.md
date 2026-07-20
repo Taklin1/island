@@ -31,7 +31,7 @@ Serveur HTTP embarqué dans l'app, sur 127.0.0.1, seul point d'entrée des Évé
 _Avoid_ : compact, micro-barre
 
 **Étendu** :
-Mode de l'Island après Révélation : une carte par Session (projet, dernier prompt, Résumé, badges, quotas), triées par **Priorité d'état**. Se replie (retour à Masqué) quand le curseur quitte le panneau (petit délai de grâce anti-clignotement).
+Mode de l'Island après Révélation : les jauges de Quotas en tête du panneau (premier élément visible à l'ouverture, défilent avec la liste), puis une carte par Session (projet, dernier prompt, Résumé, badges), triées par **Priorité d'état**. Se replie (retour à Masqué) quand le curseur quitte le panneau (petit délai de grâce anti-clignotement).
 
 **Priorité d'état** :
 Ordre de « pressant » des états d'une Session : **waiting > terminé > working > idle**. Critère unique partagé par l'Icône animée, le Liseré, le Peek et la liste Étendue (source unique `SessionState.priorityRank`, jamais recopié). Dans la liste Étendue, départage à rang égal par récence *par groupe* : `waiting` = plus ancien d'abord (anti-oubli), `terminé`/`working`/`idle` = plus frais d'abord ; ordre déterministe (départage final par id) donc pas de sautillement au rafraîchissement.
