@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import DynamicNotchKit
 import IslandStore
@@ -463,28 +464,74 @@ struct ExpandedContentView: View {
 struct SessionCardsView: View {
     @ObservedObject var model: IslandViewModel
 
+    /// Fraction of the screen height the Extended list may fill before it starts
+    /// to scroll (#43). Kept well under the vendored half-screen window borne
+    /// (`DynamicNotch` sizes its panel to `screen.frame.height / 2`), so this
+    /// content cap — not the window — is what bounds a crowded list.
+    static let maxHeightFraction: CGFloat = 0.25
+
+    /// The panel height for a given content and screen: hug the content below
+    /// the cap (no empty space with 1–2 Sessions), clamp to ~1/4 of the screen
+    /// above it so the overflow scrolls. Pure, so the arithmetic is pinned by a
+    /// unit test while the scrolling itself is verified visually.
+    static func cappedHeight(contentHeight: CGFloat, screenHeight: CGFloat) -> CGFloat {
+        min(contentHeight, screenHeight * maxHeightFraction)
+    }
+
+    /// Measured intrinsic height of the card list, fed by a background
+    /// `GeometryReader`. Zero until the first layout pass — the panel then stays
+    /// intrinsic so the vendored `.fixedSize()` wrap never collapses it to
+    /// nothing before the first measurement lands.
+    @State private var contentHeight: CGFloat = 0
+
+    /// ~1/4 of the current screen height, mirroring the vendored borne's use of
+    /// `frame` (not `visibleFrame`) on the first screen. Falls back to a sane
+    /// value when no screen is reported.
+    private var screenHeight: CGFloat {
+        NSScreen.screens.first?.frame.height ?? 900
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if model.cards.isEmpty {
-                Text("aucune session")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 8) {
+                if model.cards.isEmpty {
+                    Text("aucune session")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(model.cards) { card in
+                    SessionCardView(card: card)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            model.activateSession?(card.id)
+                        }
+                }
+                // Quotas (issue #9): global gauges at the foot of the panel,
+                // only when the statusline reported rate limits. In v1 they
+                // scroll with the list (#43).
+                if !model.quotaGauges.isEmpty {
+                    QuotaGaugesView(gauges: model.quotaGauges)
+                }
             }
-            ForEach(model.cards) { card in
-                SessionCardView(card: card)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        model.activateSession?(card.id)
-                    }
-            }
-            // Quotas (issue #9): global gauges at the foot of the panel,
-            // only when the statusline reported rate limits.
-            if !model.quotaGauges.isEmpty {
-                QuotaGaugesView(gauges: model.quotaGauges)
-            }
+            .padding(12)
+            .frame(maxWidth: 340)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { contentHeight = proxy.size.height }
+                        .onChange(of: proxy.size.height) { _, newValue in
+                            contentHeight = newValue
+                        }
+                }
+            )
         }
-        .padding(12)
-        .frame(maxWidth: 340)
+        // Hug the content until it would exceed ~1/4 of the screen, then cap and
+        // let the overflow scroll (#43). Standard macOS overlay scrollers — no
+        // permanent indicator. Only the height is constrained: the width keeps
+        // hugging its content up to 340 pt, unchanged.
+        .frame(height: contentHeight == 0
+            ? nil
+            : Self.cappedHeight(contentHeight: contentHeight, screenHeight: screenHeight))
     }
 }
 
