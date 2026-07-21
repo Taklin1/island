@@ -215,6 +215,11 @@ jobs:
       - name: Destroy the disposable keychain
         if: always()
         run: |
+          # Delete the disposable keychain (holds the private key) and wipe the
+          # materialised secret files. The admin-domain trust setting added at
+          # import time is intentionally left as-is: the GitHub-hosted runner is
+          # ephemeral and discarded after the job, and `security
+          # delete-certificate` on the System keychain blocks non-interactively
+          # on a headless runner (it would hang the job).
           security delete-keychain "${KEYCHAIN_PATH}" 2>/dev/null || true
-          sudo security delete-certificate -c "${SIGN_IDENTITY}" -t /Library/Keychains/System.keychain 2>/dev/null || true
           rm -f "${P12_PATH}" "${CERT_PATH}"
