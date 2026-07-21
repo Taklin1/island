@@ -186,49 +186,11 @@ extension TerminalResponder {
     /// test and never from a script against the working instance.
     public static let live = TerminalResponder(
         isTrusted: { AXIsProcessTrusted() },
-        listWindows: liveGhosttyWindows,
+        listWindows: GhosttyWindows.live,
         observeFrontTerminal: liveObserveFrontTerminal,
         postKeystroke: livePostKeystroke,
         settle: { try? await Task.sleep(for: .milliseconds(50)) }
     )
-}
-
-/// Bundle identifier of the only terminal v1 targets (spike #25). The exact
-/// window/tab enumeration below is the shared mechanism **#36 reuses** (focus
-/// the exact window, not just the app) instead of growing a second one.
-private let ghosttyBundleID = "com.mitchellh.ghostty"
-
-/// Enumerates every window of every running Ghostty instance and reads the cwd
-/// each exposes via `AXDocument` (spike #25), paired with its owning pid and
-/// its raise action. Iterates **all** instances of the bundle — a second
-/// instance (`open -n`) would otherwise hide its windows from a
-/// first-instance-only scan.
-private func liveGhosttyWindows() -> [TerminalWindow] {
-    var windows: [TerminalWindow] = []
-    for app in NSRunningApplication.runningApplications(withBundleIdentifier: ghosttyBundleID) {
-        let appElement = AXUIElementCreateApplication(app.processIdentifier)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            appElement, kAXWindowsAttribute as CFString, &value) == .success,
-            let axWindows = value as? [AXUIElement]
-        else { continue }
-        for window in axWindows {
-            var document: CFTypeRef?
-            let read = AXUIElementCopyAttributeValue(
-                window, kAXDocumentAttribute as CFString, &document)
-            let cwd = read == .success ? document as? String : nil
-            windows.append(TerminalWindow(cwd: cwd, pid: app.processIdentifier) {
-                // Certain target only (the caller vetted unicity): raise the
-                // window and activate Ghostty — this shows the user the terminal
-                // the answer lands in. Delivery no longer depends on this
-                // activation being effective (#81): the keystroke is posted to
-                // the pid only after `liveObserveFrontTerminal` confirms it.
-                AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-                app.activate()
-            })
-        }
-    }
-    return windows
 }
 
 /// Re-reads the live state of the Ghostty instance right before posting

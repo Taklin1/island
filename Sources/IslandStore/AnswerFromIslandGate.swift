@@ -25,6 +25,20 @@ public enum AnswerFromIslandGate {
     ) -> AnswerFromIslandAction {
         guard featureEnabled else { return .displayAndFocus(guideToSettings: false) }
         if permissionGranted { return .inject }
-        return .displayAndFocus(guideToSettings: !onboardingAlreadyPrompted)
+        return .displayAndFocus(guideToSettings: AccessibilityGuidance.shouldGuide(
+            permissionGranted: permissionGranted,
+            alreadyPrompted: onboardingAlreadyPrompted))
+    }
+}
+
+/// The one Accessibility-onboarding latch decision, shared by every trigger
+/// (issues #28, #36): guide to System Settings on the **first** use lacking the
+/// permission — an option tap, the menu toggle, or a card click (whose window
+/// targeting needs the same permission, independently of the injection
+/// preference) — and never again once any of them prompted. Pure, so the
+/// one-guidance-for-the-whole-app rule is pinned without touching TCC.
+public enum AccessibilityGuidance {
+    public static func shouldGuide(permissionGranted: Bool, alreadyPrompted: Bool) -> Bool {
+        !permissionGranted && !alreadyPrompted
     }
 }

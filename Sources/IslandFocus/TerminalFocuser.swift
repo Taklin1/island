@@ -1,9 +1,12 @@
 import AppKit
+import ApplicationServices
 import IslandStore
 
-/// Click-to-focus (issue #10): brings the terminal hosting a Session to the
-/// foreground. v1 activates the whole app — targeting the exact window/tab is
-/// out of scope (v1.5). Activation goes through NSWorkspace, so the Island
+/// Click-to-focus (issues #10, #36): brings the terminal hosting a Session to
+/// the foreground — the Session's **exact Ghostty window** when it is a certain
+/// target (the same unicity verdict as the injection, without its extra
+/// guards: no keystroke is at stake, a wrong window is benign), otherwise the
+/// whole app as before. Activation goes through NSWorkspace, so the Island
 /// (a non-activating panel in an accessory app) never becomes active itself.
 @MainActor
 public struct TerminalFocuser {
@@ -12,17 +15,28 @@ public struct TerminalFocuser {
     private let activateBundleID: (String) -> Bool
     /// Fallback: launches (or activates) an app by display name.
     private let launchApplication: (String) -> Void
+    /// Whether the process holds Accessibility trust; without it Ghostty's
+    /// windows are unreadable, so the focus stays app-level — immediate, never
+    /// blocking (issue #36).
+    private let isTrusted: () -> Bool
+    /// Enumerates the open Ghostty windows — the one window/tab mechanism
+    /// shared with the injection (``GhosttyWindows``, issue #36).
+    private let listWindows: () -> [TerminalWindow]
 
     /// Seams are injectable for tests; production uses `.live`.
     public init(
         activateBundleID: @escaping (String) -> Bool,
-        launchApplication: @escaping (String) -> Void
+        launchApplication: @escaping (String) -> Void,
+        isTrusted: @escaping () -> Bool,
+        listWindows: @escaping () -> [TerminalWindow]
     ) {
         self.activateBundleID = activateBundleID
         self.launchApplication = launchApplication
+        self.isTrusted = isTrusted
+        self.listWindows = listWindows
     }
 
-    /// Production focuser, backed by NSWorkspace.
+    /// Production focuser, backed by NSWorkspace and the Accessibility API.
     public static let live = TerminalFocuser(
         activateBundleID: { bundleID in
             if let running = NSRunningApplication
@@ -43,17 +57,50 @@ public struct TerminalFocuser {
             NSWorkspace.shared.openApplication(
                 at: url, configuration: NSWorkspace.OpenConfiguration()
             )
-        }
+        },
+        isTrusted: { AXIsProcessTrusted() },
+        listWindows: GhosttyWindows.live
     )
 
-    /// Brings the given terminal frontmost (default terminal when unknown).
-    public func focus(terminal: String?) {
+    /// How a focus landed (issue #36): the Session's exact window, or the
+    /// whole app as before. Returned so the caller can trace it — the agentic
+    /// FP observes the path through stdout, never through pixels.
+    public enum FocusOutcome: Equatable {
+        case exactWindow
+        case app
+    }
+
+    /// Brings the given terminal frontmost (default terminal when unknown):
+    /// the Session's exact window when certain, the app otherwise (#36).
+    @discardableResult
+    public func focus(terminal: String?, cwd: String? = nil) -> FocusOutcome {
         let terminal = terminal ?? TerminalRegistry.defaultTerminal
+        if let window = certainWindow(terminal: terminal, cwd: cwd) {
+            window.raiseAndActivate()
+            return .exactWindow
+        }
         if let bundleID = TerminalRegistry.bundleID(for: terminal),
            activateBundleID(bundleID) {
-            return
+            return .app
         }
         launchApplication(TerminalRegistry.appName(for: terminal))
+        return .app
+    }
+
+    /// The Session's exact Ghostty window, iff it is a certain target: the
+    /// unicity verdict **alone** decides (issue #36 — exactly one window whose
+    /// `AXDocument` is the Session's cwd). Ghostty-only: other terminals never
+    /// expose a readable cwd (spike #25). Windows are not even enumerated
+    /// without Accessibility trust.
+    private func certainWindow(terminal: String, cwd: String?) -> TerminalWindow? {
+        guard let cwd, isTrusted(),
+              TerminalRegistry.bundleID(for: terminal) == GhosttyWindows.bundleID
+        else { return nil }
+        let windows = listWindows()
+        guard case let .certain(index) = GhosttyWindowTargeting.verdict(
+            forSessionCWD: cwd, amongst: windows.map(\.cwd))
+        else { return nil }
+        return windows[index]
     }
 }
 
