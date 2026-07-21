@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 #
-# Packages island into a real, ad-hoc-signed `island.app` bundle and installs
-# it to ~/Applications (no sudo). Personal/local use only: ad-hoc signature
-# (`codesign -s -`), no notarization, no Developer ID, no distribution.
+# Packages island into a real, signed `island.app` bundle and installs it to
+# ~/Applications (no sudo). Ad-hoc signature (`codesign -s -`) by default for
+# local/dev use; the release CI overrides ISLAND_CODESIGN_IDENTITY to sign with
+# the stable certificate (release.yml, ADR-0010). No notarization, no Developer
+# ID.
 #
 # Why a bundle: SMAppService (the login item) and the menu-bar lifecycle need a
 # genuine .app — the bare SwiftPM binary fails to register (issue #6, ADR notes
@@ -30,6 +32,11 @@ INSTALL_DIR="${HOME}/Applications"
 DIST_DIR="${REPO_ROOT}/.build/dist"     # gitignored (.build/)
 APP_DIR="${DIST_DIR}/${APP_NAME}.app"
 RESOURCE_BUNDLE="Island_IslandUI.bundle"
+# Signing identity: ad-hoc `-` by default (local/dev, ADR-0005). The release CI
+# (release.yml, ADR-0010) exports ISLAND_CODESIGN_IDENTITY=island-release so the
+# stable certificate signs the bundle and the Accessibility permission survives
+# updates. One signing path — the workflow never re-signs afterwards.
+CODESIGN_IDENTITY="${ISLAND_CODESIGN_IDENTITY:--}"
 
 INSTALL=1
 RELEASE=0
@@ -140,11 +147,11 @@ ${ICON_KEY}
 </plist>
 PLIST
 
-# --- Ad-hoc sign (personal/local only) ---------------------------------------
-echo "==> codesign (ad-hoc)"
-codesign --force --deep --sign - "${APP_DIR}"
+# --- Sign (ad-hoc locally, stable certificate in release CI) -----------------
+echo "==> codesign (${CODESIGN_IDENTITY})"
+codesign --force --deep --sign "${CODESIGN_IDENTITY}" "${APP_DIR}"
 codesign --verify --verbose "${APP_DIR}"
-codesign -dv "${APP_DIR}" 2>&1 | grep -Ei 'Identifier|Signature|TeamIdentifier' || true
+codesign -dv "${APP_DIR}" 2>&1 | grep -Ei 'Identifier|Signature|Authority|TeamIdentifier' || true
 
 # --- Install -----------------------------------------------------------------
 if [[ "${INSTALL}" -eq 1 ]]; then
