@@ -57,6 +57,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// API, no auth); the agentic FP swaps the URL via `ISLAND_UPDATE_FEED_URL`
     /// to serve a fixture (traced when active, see `makeUpdateFetcher`).
     private lazy var updateFetcher: UpdateFetcher = Self.makeUpdateFetcher()
+    /// One-click update (issue #92): the click hands off to install.sh via
+    /// this seam — unit tests record the closure, only `live` runs the script.
+    private var updateInstaller: UpdateInstaller = .live
+    /// Agentic FP seam (issue #92): `ISLAND_UPDATE_SIMULATE_CLICK=1` performs
+    /// the update click once, right after the first updateAvailable verdict —
+    /// the real menu bar is not clickable from the FP (limit acted in #91).
+    private var didSimulateUpdateClick = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let store = store
@@ -374,7 +381,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 postUpdateNotification(version: version)
                 settings.lastNotifiedUpdateVersion = version
             }
+            simulateUpdateClickIfAsked()
         }
+    }
+
+    /// FP-only (issue #92): the status-bar menu of the bare SwiftPM binary
+    /// cannot be clicked by the agentic FP (observation acted in #91), so this
+    /// traced seam performs the click handler once when asked via env. It goes
+    /// through the exact same `updateClicked()` the menu item targets — and the
+    /// installer still consults the real `AppVersion.current`, so on the bare
+    /// binary (always `-dev`) the FP proves the click wiring AND that the dev
+    /// guard cannot be bypassed by the detection seams.
+    private func simulateUpdateClickIfAsked() {
+        guard ProcessInfo.processInfo.environment["ISLAND_UPDATE_SIMULATE_CLICK"] == "1",
+            !didSimulateUpdateClick
+        else { return }
+        didSimulateUpdateClick = true
+        print("island: update click simulated (agentic FP seam)")
+        updateClicked()
     }
 
     /// Mutates the version item of #88 in place (the menu is never rebuilt).
@@ -430,10 +454,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in await self.runUpdateCheck(trigger: "menu") }
     }
 
-    /// Clicking "⬆ Mettre à jour vers vY.Z…" stays a traced no-op; #92 wires
-    /// the install script (the same one as the Canal d'installation) to it.
+    /// Clicking "⬆ Mettre à jour vers vY.Z…" (issue #92, ADR-0010): hands off
+    /// to install.sh — the same script as the Canal d'installation, which will
+    /// quit this process, replace ~/Applications/island.app and relaunch. No
+    /// confirmation step: the explicit click IS the consent. One trace per
+    /// outcome (the agentic FP asserts these).
     @objc private func updateClicked() {
-        print("island: update click (no-op, wired in #92)")
+        print("island: update clicked")
+        switch updateInstaller.install() {
+        case .launched:
+            print("island: update install script launched"
+                + " (log: \(UpdateInstaller.installLogPath))")
+        case .refusedDevBuild:
+            print("island: update refused (dev build never updates, US15)")
+        }
     }
 
     /// Agentic FP seam (issue #91): the bare SwiftPM binary is always `-dev`
