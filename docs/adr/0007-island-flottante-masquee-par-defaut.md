@@ -37,11 +37,14 @@ style et le mode de repos changent. Cible : Mac **sans encoche** (aucune machine
   la bande top-center, actif en permanence, qui appelle `expand()`. Bord franc
   (curseur à y≈0) plutôt que bande épaisse : geste délibéré, quasi zéro faux
   positif ; rien si zéro Session.
-- **Plein écran couvert.** Le panneau est au niveau `.screenSaver` +
-  `.canJoinAllSpaces`, le Liseré a `.fullScreenAuxiliary` : Peek, Révélation et
-  Liseré s'affichent par-dessus un app plein écran (cas d'usage principal : coder
-  en plein écran). La Révélation coexiste avec la barre des menus qui se révèle au
-  même geste (centre de la barre vide).
+- **Plein écran couvert.** Le panneau (niveau `.screenSaver`) comme le Liseré
+  (`.statusBar`) portent `.canJoinAllSpaces` + `.fullScreenAuxiliary` : Peek,
+  Révélation et Liseré s'affichent par-dessus une app plein écran (cas d'usage
+  principal : coder en plein écran). C'est `.fullScreenAuxiliary` qui autorise à
+  rejoindre le Space plein écran — le niveau et `.canJoinAllSpaces` seuls n'y
+  suffisent pas ; le panneau ne l'a gagné qu'avec #103 (le Liseré l'avait déjà).
+  La Révélation coexiste avec la barre des menus qui se révèle au même geste
+  (centre de la barre vide).
 - **Acquittement redéfini.** Sans barre toujours-visible, « survoler = acquitter
   tout » disparaît : regarder ≠ traiter. On acquitte **une Session à la fois** en
   agissant (clic carte → click-to-focus #10, ou refocus terminal) ; le Liseré

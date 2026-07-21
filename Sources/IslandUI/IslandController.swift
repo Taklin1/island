@@ -377,8 +377,10 @@ public final class IslandController {
     /// Deliberate Reveal from the global mouse monitor: the cursor was pinned to
     /// the top-centre edge (``shouldReveal(at:in:sessionCount:)`` already vetted
     /// the geometry and the ≥1-Session rule), so deploy the Étendu. Works at any
-    /// time — rest or waiting — and over a full-screen app (the panel is
-    /// `.screenSaver` + `.canJoinAllSpaces`). Never acknowledges: looking ≠
+    /// time — rest or waiting — and over a full-screen app: the vendored panel is
+    /// `.screenSaver` + `.canJoinAllSpaces` + `.fullScreenAuxiliary`, the last of
+    /// which is what actually lets it join a full-screen Space (issue #103 — the
+    /// level and `.canJoinAllSpaces` alone do not). Never acknowledges: looking ≠
     /// treating (ADR-0007).
     public func reveal() {
         expandToExtended(trigger: "révélation")
