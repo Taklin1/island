@@ -29,15 +29,22 @@ jobs:
     runs-on: macos-15
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Disposable signing keychain, destroyed in the always() cleanup step.
-      KEYCHAIN_PATH: ${{ runner.temp }}/island-signing.keychain-db
-      CERT_PATH: ${{ runner.temp }}/island-release.cert.pem
-      P12_PATH: ${{ runner.temp }}/island-release.p12
       SIGN_IDENTITY: island-release
 
     steps:
       - name: Check out the tagged (or dispatched) commit
         uses: actions/checkout@v4
+
+      - name: Set up disposable signing paths
+        run: |
+          # $RUNNER_TEMP is only available at step level (not in job env), so the
+          # keychain/cert/p12 paths are published here for the import and the
+          # always() cleanup steps. The keychain is destroyed at the end.
+          {
+            echo "KEYCHAIN_PATH=${RUNNER_TEMP}/island-signing.keychain-db"
+            echo "CERT_PATH=${RUNNER_TEMP}/island-release.cert.pem"
+            echo "P12_PATH=${RUNNER_TEMP}/island-release.p12"
+          } >> "${GITHUB_ENV}"
 
       - name: Pin a Swift 6 toolchain
         run: |
