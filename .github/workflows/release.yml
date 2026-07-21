@@ -1,0 +1,213 @@
+# Publishes a signed GitHub Release from island's packaging script (ADR-0010).
+#
+# Two entry points, one build path:
+#   - push of a `vX.Y.Z` tag on main  -> a real Release with `island.zip` attached
+#   - workflow_dispatch (any branch)  -> a *draft* dry-run Release, deleted at the
+#     end of the run; the safe way to exercise this pipeline on the epic branch
+#     with no real tag and no maintainer gesture.
+#
+# The binary is signed by the stable self-signed certificate `island-release`
+# (spike #87), imported from the ISLAND_CERT_P12 / ISLAND_CERT_P12_PASSWORD
+# secrets into a disposable keychain. Version and packaging come untouched from
+# scripts/package_app.sh --release; the only added steps are the certificate
+# import, the zip, and the Release upload.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Creating a Release and uploading its asset via the default GITHUB_TOKEN needs
+# write access to repository contents (without it the upload 403s).
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Disposable signing keychain, destroyed in the always() cleanup step.
+      KEYCHAIN_PATH: ${{ runner.temp }}/island-signing.keychain-db
+      CERT_PATH: ${{ runner.temp }}/island-release.cert.pem
+      P12_PATH: ${{ runner.temp }}/island-release.p12
+      SIGN_IDENTITY: island-release
+
+    steps:
+      - name: Check out the tagged (or dispatched) commit
+        uses: actions/checkout@v4
+
+      - name: Pin a Swift 6 toolchain
+        run: |
+          set -euo pipefail
+          # Package.swift is swift-tools-version 6.0; do not depend on the runner
+          # default, which drifts across image updates. Pin the highest installed
+          # Xcode 16.x explicitly, then assert the toolchain really is >= 6.0.
+          latest_xcode="$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1 || true)"
+          if [ -n "${latest_xcode}" ]; then
+            sudo xcode-select -s "${latest_xcode}"
+          fi
+          swift --version
+          major="$(swift --version | grep -Eo 'Swift version [0-9]+' | grep -Eo '[0-9]+' | head -1)"
+          if [ "${major:-0}" -lt 6 ]; then
+            echo "error: Swift >= 6.0 required (Package.swift is swift-tools-version 6.0)" >&2
+            swift --version >&2
+            exit 1
+          fi
+
+      - name: Resolve version and enforce tag == CHANGELOG head
+        id: version
+        run: |
+          set -euo pipefail
+          # Single source of truth: the top of CHANGELOG.md (same regex as
+          # scripts/package_app.sh). The tag is `vX.Y.Z`; the CHANGELOG head is
+          # `## X.Y.Z` (no `v`) — strip the `v` before comparing.
+          changelog_version="$(grep -m1 -Eo '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | sed 's/^## //')"
+          if [ -z "${changelog_version}" ]; then
+            echo "error: could not read version from CHANGELOG.md" >&2
+            exit 1
+          fi
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+            tag_version="${tag#v}"
+            if [ "${tag_version}" != "${changelog_version}" ]; then
+              echo "error: tag ${tag} (version ${tag_version}) does not match CHANGELOG head ${changelog_version}." >&2
+              echo "       Retag or bump CHANGELOG.md so they agree before releasing." >&2
+              exit 1
+            fi
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+            echo "version=${changelog_version}" >> "$GITHUB_OUTPUT"
+            echo "release_tag=${tag}" >> "$GITHUB_OUTPUT"
+            echo "release_title=island ${changelog_version}" >> "$GITHUB_OUTPUT"
+          else
+            # workflow_dispatch: no tag. Derive the version from the CHANGELOG head
+            # and produce a deletable draft. The tag name is run-unique and only
+            # exists on the draft (a draft never creates a real git tag).
+            echo "dry_run=true" >> "$GITHUB_OUTPUT"
+            echo "version=${changelog_version}" >> "$GITHUB_OUTPUT"
+            echo "release_tag=v${changelog_version}-dryrun-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+            echo "release_title=island ${changelog_version} (dry-run)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import the signing certificate into a disposable keychain
+        env:
+          ISLAND_CERT_P12: ${{ secrets.ISLAND_CERT_P12 }}
+          ISLAND_CERT_P12_PASSWORD: ${{ secrets.ISLAND_CERT_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain_pw="$(openssl rand -base64 24)"
+
+          # Materialise the .p12 from the base64 secret (spike #87 contract).
+          printf '%s' "${ISLAND_CERT_P12}" | base64 --decode > "${P12_PATH}"
+
+          # Create, unlock, and put the disposable keychain first in the search
+          # list (keeping the existing ones so the system roots stay reachable).
+          security create-keychain -p "${keychain_pw}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings "${KEYCHAIN_PATH}"   # no auto-lock during the run
+          security unlock-keychain -p "${keychain_pw}" "${KEYCHAIN_PATH}"
+          security list-keychains -d user -s "${KEYCHAIN_PATH}" \
+            $(security list-keychains -d user | sed 's/["]//g')
+
+          # Import the identity (private key + certificate) and grant codesign
+          # access; the partition list stops codesign from prompting on a headless
+          # runner (it would otherwise hang).
+          security import "${P12_PATH}" -P "${ISLAND_CERT_P12_PASSWORD}" \
+            -k "${KEYCHAIN_PATH}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "${keychain_pw}" "${KEYCHAIN_PATH}" >/dev/null
+
+          # The certificate is self-signed (spike #87): codesign refuses it as
+          # untrusted (CSSMERR_TP_NOT_TRUSTED) unless it is trusted for the
+          # code-signing policy. Trust it in the admin domain via sudo — the
+          # headless-safe path (no user-session authorization dialog).
+          security find-certificate -c "${SIGN_IDENTITY}" -p "${KEYCHAIN_PATH}" > "${CERT_PATH}"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+            -k /Library/Keychains/System.keychain "${CERT_PATH}"
+
+          # Fail fast (before the build) if the identity is not usable for signing.
+          valid_identities="$(security find-identity -v -p codesigning || true)"
+          if ! grep -q "${SIGN_IDENTITY}" <<<"${valid_identities}"; then
+            echo "error: ${SIGN_IDENTITY} is not a valid codesigning identity after import/trust" >&2
+            echo "${valid_identities}" >&2
+            exit 1
+          fi
+
+      - name: Build, bundle and sign the release app
+        run: ISLAND_CODESIGN_IDENTITY="${SIGN_IDENTITY}" scripts/package_app.sh --no-install --release
+
+      - name: Verify signature and release version
+        run: |
+          set -euo pipefail
+          app=".build/dist/island.app"
+
+          # Signed by the stable certificate, not ad-hoc: an Authority line for
+          # our identity must be present (ad-hoc shows `Signature=adhoc`, no
+          # Authority).
+          codesign_out="$(codesign -dvv "${app}" 2>&1 || true)"
+          if ! grep -q "^Authority=${SIGN_IDENTITY}$" <<<"${codesign_out}"; then
+            echo "error: expected Authority=${SIGN_IDENTITY}; codesign reports:" >&2
+            echo "${codesign_out}" >&2
+            exit 1
+          fi
+
+          # Bare release version — a release must never carry a -dev suffix.
+          app_version="$(defaults read "${PWD}/${app}/Contents/Info" CFBundleShortVersionString)"
+          case "${app_version}" in
+            *-dev)
+              echo "error: release bundle carries a -dev version: ${app_version}" >&2
+              exit 1
+              ;;
+          esac
+          echo "verified: island.app signed by ${SIGN_IDENTITY}, version ${app_version}"
+
+      - name: Zip the app bundle
+        run: |
+          set -euo pipefail
+          # ditto --keepParent preserves the signature and puts island.app at the
+          # zip root — the layout scripts/install.sh (#89) expects. The asset name
+          # `island.zip` is the frozen inter-issue contract (no version in it).
+          ditto -c -k --keepParent .build/dist/island.app island.zip
+
+      - name: Publish the Release
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          tag="${{ steps.version.outputs.release_tag }}"
+          title="${{ steps.version.outputs.release_title }}"
+
+          # Release notes = this version's CHANGELOG section.
+          notes_file="$(mktemp)"
+          awk -v v="${version}" '
+            $0 == "## " v { grab=1; next }
+            /^## / && grab { exit }
+            grab { print }
+          ' CHANGELOG.md > "${notes_file}"
+
+          if [ "${{ steps.version.outputs.dry_run }}" = "true" ]; then
+            { echo "> Dry-run build from \`${GITHUB_REF_NAME}\` (run ${GITHUB_RUN_ID}). Not a real release."; echo; cat "${notes_file}"; } > "${notes_file}.dry"
+            mv "${notes_file}.dry" "${notes_file}"
+            gh release create "${tag}" island.zip \
+              --draft \
+              --title "${title}" \
+              --notes-file "${notes_file}"
+          else
+            gh release create "${tag}" island.zip \
+              --title "${title}" \
+              --notes-file "${notes_file}"
+          fi
+
+      - name: Delete the dry-run draft Release
+        if: always() && steps.version.outputs.dry_run == 'true'
+        run: |
+          # Best-effort cleanup: a dry-run leaves no real tag and no real Release.
+          gh release delete "${{ steps.version.outputs.release_tag }}" --yes 2>/dev/null || true
+
+      - name: Destroy the disposable keychain
+        if: always()
+        run: |
+          security delete-keychain "${KEYCHAIN_PATH}" 2>/dev/null || true
+          sudo security delete-certificate -c "${SIGN_IDENTITY}" -t /Library/Keychains/System.keychain 2>/dev/null || true
+          rm -f "${P12_PATH}" "${CERT_PATH}"
