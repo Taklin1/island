@@ -118,18 +118,23 @@ struct WaitingAndClickTests {
         let store = SessionStore()
         store.apply(AgentEvent(
             sessionID: "blocked", kind: .waitingForUser(message: nil),
-            terminal: "ghostty", agent: "claude-code"
+            cwd: "/tmp/demo", terminal: "ghostty", agent: "claude-code"
         ))
         store.apply(AgentEvent(
             sessionID: "done", kind: .turnEnded(awaitsReply: false, liveBackgroundTaskCount: 0),
             terminal: "ghostty", agent: "claude-code"
         ))
-        var focused: [String?] = []
-        let controller = IslandController(store: store, focusTerminal: { focused.append($0) })
+        var focused: [(terminal: String?, cwd: String?)] = []
+        let controller = IslandController(
+            store: store, focusTerminal: { focused.append(($0, $1)) })
 
         controller.cardActivated(sessionID: "blocked")
 
-        #expect(focused == ["ghostty"])
+        // The Session's cwd travels with the focus (#36): the focuser needs it
+        // to target the exact Ghostty window when it is a certain target.
+        #expect(focused.count == 1)
+        #expect(focused.first?.terminal == "ghostty")
+        #expect(focused.first?.cwd == "/tmp/demo")
         #expect(store.sessions.first(where: { $0.id == "blocked" })?.needsAcknowledgement == false)
         #expect(store.sessions.first(where: { $0.id == "done" })?.needsAcknowledgement == true)
     }

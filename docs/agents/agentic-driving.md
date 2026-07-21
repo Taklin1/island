@@ -225,3 +225,61 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
   que partiellement. La capture live reste nécessaire pour le **comportement**
   (timing, valeurs effectives, courses — cf. section précédente) ; le binaire
   donne la **forme**. Les deux se complètent, binaire d'abord.
+
+## Instance de test dédiée : ISLAND_PORT (le port fixe 41414 est pris par l'app réelle)
+
+- **Découverte** (FP #36, 2026-07-21) : l'island.app réelle de Loïc tourne en
+  permanence et détient le port fixe `41414` — impossible de lancer une
+  instance de test (le serveur échoue → l'app se termine), et il est interdit
+  de piloter l'app réelle (vieille version + sessions réelles).
+- **Bonne méthode** : lancer le binaire debug avec la seam d'environnement
+  `ISLAND_PORT` (ajoutée par #36), en tâche de fond suivie par le harness (un
+  `nohup … &` dans un shell éphémère se fait moissonner à la fermeture du
+  shell) :
+  ```bash
+  ISLAND_PORT=41436 .build/debug/Island 2>&1 | tee island-fp.log   # run_in_background
+  curl -s -X POST http://127.0.0.1:41436/hooks/claude-code -H "X-Island-Token: $(cat ~/.claude/island-token)" -d "$FIXTURE"
+  ```
+  Le binaire debug a son propre domaine defaults `Island` (l'app packagée vit
+  dans `com.taklin.island`) : pré-poser
+  `defaults write Island answerFromIslandOnboardingPrompted -bool true` avant
+  un parcours sans permission, sinon le premier clic ouvre Réglages Système sur
+  l'écran du mainteneur.
+- **Pourquoi** : isolation — les fixtures de test n'apparaissent jamais dans
+  l'island réelle, et les hooks réels (branchés sur 41414) n'atteignent jamais
+  l'instance de test.
+
+## Cliquer une carte en synthétique : NON fiable — passer par un harnais de seam live
+
+- **Découverte** (FP #36, 2026-07-21) : impossible de cliquer une carte/le Peek
+  au CGEvent pendant que le mainteneur travaille. Causes empilées, toutes
+  vérifiées : un curseur **warpé statique ne maintient pas `isHovering`** (le
+  panneau recède ~1-2 s après la Révélation, même curseur posé dessus — même
+  racine que le piège « screenshot de l'Étendu » ci-dessus) ; le clic pendant la
+  transition Peek→Étendu tombe sur une vue en cours de fondu (non cliquable) ;
+  un jiggle d'entretien du hover se fait interrompre par les mouvements réels
+  de l'utilisateur ; `mouseEventClickState=1` est nécessaire mais pas
+  suffisant ; un clic `System Events` traverse jusqu'à la fenêtre Ghostty
+  derrière (le panneau non-activant est invisible au hit-test AX). En prime :
+  viser la « plus grande fenêtre » du pid attrape l'overlay du Liseré
+  (plein écran, layer 25) — le panneau est la fenêtre **layer 1000** (hôte
+  720×450, contenu visible en haut-centre seulement).
+- **Bonne méthode** : ne pas s'entêter sur le geste UI. Vérifier la chaîne en
+  deux moitiés : (1) la jambe clic→`cardActivated` est couverte par les tests
+  unitaires + le garde `FirstMouseTests` + les clics réels des FP précédents ;
+  (2) la jambe OS s'exerce par un **harnais de seam live** — un exécutable de
+  scratchpad qui linke les objets du package et appelle la seam `.live` de
+  production directement, puis re-lit l'état AX en lecture seule :
+  ```bash
+  swiftc harness.swift -I .build/arm64-apple-macosx/debug/Modules \
+    .build/arm64-apple-macosx/debug/IslandFocus.build/*.o \
+    .build/arm64-apple-macosx/debug/IslandStore.build/*.o -framework AppKit
+  ```
+- **Preuve** (FP #36) : 6 stratégies de clic échouées en ~15 min (aucune trace
+  `card activated`) ; le harnais a prouvé les deux verdicts en 2 runs —
+  `click-to-focus app` (cwd sans fenêtre) et `click-to-focus exactWindow` +
+  fenêtre-clé re-lue = cible (Ghostty désactivée avant le run : la bascule est
+  réelle).
+- **Pourquoi** : fiabilité + politesse — chaque tentative de clic vole le
+  curseur du mainteneur ; le harnais de seam prouve le geste AX réel sans
+  toucher ni au curseur ni à l'app réelle.
