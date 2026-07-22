@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import IslandUI
 import IslandStore
@@ -58,6 +59,22 @@ struct QuotaPresentationTests {
 
         #expect(over[0].fraction == 1)
         #expect(over[1].fraction == 0)
+    }
+
+    @Test("A gauge exposes its threshold colour on the model (green < 40 %, yellow < 75 %, red otherwise)")
+    func gaugeExposesThresholdColour() {
+        func color(forPercentage percentage: Double) -> Color {
+            QuotaGauge.gauges(for: Quotas(
+                fiveHour: RateLimitWindow(usedPercentage: percentage)
+            ))[0].thresholdColor
+        }
+
+        #expect(color(forPercentage: 0) == .green)
+        #expect(color(forPercentage: 39) == .green)
+        #expect(color(forPercentage: 40) == .yellow)
+        #expect(color(forPercentage: 74) == .yellow)
+        #expect(color(forPercentage: 75) == .red)
+        #expect(color(forPercentage: 100) == .red)
     }
 
     @Test("A window absent from the Quotas yields no gauge")
