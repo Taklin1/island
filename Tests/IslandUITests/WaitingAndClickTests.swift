@@ -7,14 +7,14 @@ import IslandStore
 /// behavior (issue #10). Pure logic + controller behavior; pixels stay visual.
 @MainActor
 struct WaitingAndClickTests {
-    @Test("A waiting Session shows the French 'attend' state and its glyph")
+    @Test("A waiting Session shows the 'waiting' state and its glyph")
     func waitingSessionPresentation() {
         let card = SessionCard(
             session: Session(id: "x", state: .waiting, agent: "claude-code"),
             home: "/Users/loic"
         )
 
-        #expect(card.stateLabel == "attend")
+        #expect(card.stateLabel == "waiting")
         #expect(card.animation == .question)
     }
 
@@ -163,8 +163,8 @@ struct WaitingAndClickTests {
         let ended = Session(
             id: "e", state: .ended, cwd: "/tmp/demo", agent: "claude-code")
 
-        #expect(IslandController.peekText(for: waiting) == "demo ? attend une réponse")
-        #expect(IslandController.peekText(for: ended) == "demo ✓ terminé")
+        #expect(IslandController.peekText(for: waiting) == "demo ? waiting for a reply")
+        #expect(IslandController.peekText(for: ended) == "demo ✓ done")
     }
 
     @Test("The Peek of a question-wait announces the question (#39)")
@@ -174,6 +174,6 @@ struct WaitingAndClickTests {
             lastSummary: TurnSummary(text: "Should I target Postgres or SQLite?"))
 
         #expect(IslandController.peekText(for: questionWait)
-            == "demo · attend : \"Should I target Postgres or SQLite?\"")
+            == "demo · waiting: \"Should I target Postgres or SQLite?\"")
     }
 }

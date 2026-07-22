@@ -50,8 +50,8 @@ public final class IslandController {
     /// its delivery is verified at the instant of the post (#81), returning
     /// whether the keystroke was actually posted. `false` means nothing was
     /// posted (uncertain target, no Accessibility permission, unverified
-    /// delivery) and the controller degrades to Click-to-focus — the "en
-    /// cours" feedback is never shown for a keystroke that did not go out.
+    /// delivery) and the controller degrades to Click-to-focus — the
+    /// "working" feedback is never shown for a keystroke that did not go out.
     /// Injected as a plain closure so the UI never imports the Focus/AX module,
     /// and so the real injection — proven only on the packaged app (spike #25) —
     /// stays entirely outside the controller. Async because the delivery
@@ -630,7 +630,7 @@ public final class IslandController {
 
     /// What the Peek announces for a marking event on a Session: the waiting
     /// call to action, or the first line of the turn summary (ADR-0002, falls
-    /// back to the bare "terminé" when the transcript had nothing usable).
+    /// back to the bare "done" when the transcript had nothing usable).
     static func peekText(for session: Session) -> String {
         session.state == .waiting
             ? SessionCard.waitingPeekLine(
@@ -729,7 +729,7 @@ struct SessionCardsView: View {
 
     /// The panel's vertical sections, top to bottom (#69). Quotas lead so the
     /// gauges are the first thing visible when the panel opens — above the cards,
-    /// not at the foot as before. The cards, or the "aucune session" placeholder
+    /// not at the foot as before. The cards, or the "no sessions" placeholder
     /// when there are none, follow. Pure like `cappedHeight`, so the order is
     /// pinned by a unit test while the rendering is verified visually.
     static func sections(hasQuotas: Bool, hasCards: Bool) -> [PanelSection] {
@@ -753,7 +753,7 @@ struct SessionCardsView: View {
                     case .quotas:
                         QuotaGaugesView(gauges: model.quotaGauges)
                     case .emptyPlaceholder:
-                        Text("aucune session")
+                        Text("no sessions")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     case .cards:
@@ -841,19 +841,19 @@ struct SessionCardView: View {
                     .truncationMode(.head)
             }
             if let prompt = card.lastPrompt {
-                Text("« \(prompt) »")
+                Text("\"\(prompt)\"")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
             if let tool = card.currentTool {
-                Text("outil : \(tool)")
+                Text("tool: \(tool)")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.orange)
                     .lineLimit(1)
             }
-            // Discreet background-task tally (issue #48/#79, Q6): "⋯ N tâches
-            // de fond en cours" — shown only while at least one runs.
+            // Discreet background-task tally (issue #48/#79, Q6): "⋯ N background
+            // tasks running" — shown only while at least one runs.
             if let backgroundTasks = card.backgroundTasksLabel {
                 Text("⋯ \(backgroundTasks)")
                     .font(.system(size: 11))

@@ -8,9 +8,9 @@ import SwiftUI
 /// reported — an absent window yields no gauge, never a misleading zero.
 struct QuotaGauge: Identifiable, Equatable {
     let id: String
-    /// French window label ("5 h" / "7 j").
+    /// Window label ("5 h" / "7 d").
     let windowLabel: String
-    /// Rounded percent label ("24 %").
+    /// Rounded percent label ("24%").
     let percentLabel: String
     /// Gauge fill, clamped to 0…1.
     let fraction: Double
@@ -38,7 +38,7 @@ struct QuotaGauge: Identifiable, Equatable {
             gauges.append(gauge(id: "five-hour", label: "5 h", window: fiveHour))
         }
         if let sevenDay = quotas.sevenDay {
-            gauges.append(gauge(id: "seven-day", label: "7 j", window: sevenDay))
+            gauges.append(gauge(id: "seven-day", label: "7 d", window: sevenDay))
         }
         return gauges
     }
@@ -47,7 +47,7 @@ struct QuotaGauge: Identifiable, Equatable {
         QuotaGauge(
             id: id,
             windowLabel: label,
-            percentLabel: "\(Int(window.usedPercentage.rounded())) %",
+            percentLabel: "\(Int(window.usedPercentage.rounded()))%",
             fraction: min(1, max(0, window.usedPercentage / 100)),
             resetLabel: window.resetsAt.map { "↺ " + Self.timeFormatter.string(from: $0) }
         )

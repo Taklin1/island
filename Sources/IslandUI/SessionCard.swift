@@ -13,7 +13,7 @@ struct SessionCard: Identifiable, Equatable {
     let project: String
     /// Abbreviated cwd ("~/Documents/island"), or nil when unknown.
     let location: String?
-    /// French state label shown on the card.
+    /// State label shown on the card.
     let stateLabel: String
     /// Pixel-art glyph animation of the state (issue #11): the bot screen's
     /// glyph alone, 2×, shown in front of the project name.
@@ -30,7 +30,7 @@ struct SessionCard: Identifiable, Equatable {
     /// card's content section. `nil` when extraction failed (fallback:
     /// state + project only).
     let summaryText: String?
-    /// One compact line of turn facts — "todos 1/3 · 2 fichiers · 3:20" —
+    /// One compact line of turn facts — "todos 1/3 · 2 files · 3:20" —
     /// keeping only what the extraction actually found.
     let summaryFacts: String?
     /// Background tasks (Sous-agents, workflows…) still running under this
@@ -51,21 +51,21 @@ struct SessionCard: Identifiable, Equatable {
     /// message rode the block.
     let waitingMessage: String?
 
-    /// French context label of the card's Quotas section, or nil when the
-    /// tee never reported a context usage for this Session.
+    /// Context label of the card's Quotas section, or nil when the tee never
+    /// reported a context usage for this Session.
     var contextLabel: String? {
-        contextUsedPercentage.map { "contexte \(Int($0.rounded())) %" }
+        contextUsedPercentage.map { "context \(Int($0.rounded()))%" }
     }
 
-    /// Discreet French tally of live background tasks (issue #48, widened by
-    /// #79, Q6), or nil when none run — "1 tâche de fond en cours" /
-    /// "3 tâches de fond en cours". Type-neutral wording on purpose: the count
+    /// Discreet tally of live background tasks (issue #48, widened by #79, Q6),
+    /// or nil when none run — "1 background task running" /
+    /// "3 background tasks running". Type-neutral wording on purpose: the count
     /// mixes Sous-agents, workflows, shell tasks… and no per-type treatment is
     /// wanted (out of #79's scope).
     var backgroundTasksLabel: String? {
         guard activeBackgroundTaskCount > 0 else { return nil }
-        let noun = activeBackgroundTaskCount == 1 ? "tâche de fond" : "tâches de fond"
-        return "\(activeBackgroundTaskCount) \(noun) en cours"
+        let noun = activeBackgroundTaskCount == 1 ? "background task" : "background tasks"
+        return "\(activeBackgroundTaskCount) \(noun) running"
     }
 
     init(session: Session, contextUsedPercentage: Double? = nil, home: String = NSHomeDirectory()) {
@@ -105,8 +105,8 @@ struct SessionCard: Identifiable, Equatable {
         }
         switch summary.filesModified.count {
         case 0: break
-        case 1: parts.append("1 fichier")
-        case let n: parts.append("\(n) fichiers")
+        case 1: parts.append("1 file")
+        case let n: parts.append("\(n) files")
         }
         if let duration = summary.turnDuration {
             parts.append(durationText(seconds: max(0, Int(duration))))
@@ -116,26 +116,26 @@ struct SessionCard: Identifiable, Equatable {
     }
 
     /// The one-line Peek for a finished turn: first meaningful line of the
-    /// summary after the project name, or the bare "terminé" fallback when
+    /// summary after the project name, or the bare "done" fallback when
     /// the transcript could not be summarized (ADR-0002: the notification
     /// always goes out).
     static func peekLine(project: String, summaryText: String?, maxLength: Int = 80) -> String {
         let headline = summaryText
             .flatMap(firstMeaningfulLine(of:))
             .map { truncate($0, at: maxLength) }
-        return "\(project) ✓ \(headline ?? "terminé")"
+        return "\(project) ✓ \(headline ?? "done")"
     }
 
     /// The one-line Peek for a Session waiting on the user. When the wait comes
     /// from a turn that ended on a question (#39, ADR-0006), show the question
-    /// itself — « projet · attend : "…?" » — so the answer is one glance away;
+    /// itself — « projet · waiting: "…?" » — so the answer is one glance away;
     /// otherwise (a permission/AskUserQuestion wait, which carries no summary)
-    /// keep the historical call to action « projet ? attend une réponse ».
+    /// keep the historical call to action « projet ? waiting for a reply ».
     static func waitingPeekLine(project: String, questionText: String?, maxLength: Int = 80) -> String {
         guard let question = questionText.flatMap(lastQuestionLine(of:)) else {
-            return "\(project) ? attend une réponse"
+            return "\(project) ? waiting for a reply"
         }
-        return "\(project) · attend : \"\(truncate(question, at: maxLength))\""
+        return "\(project) · waiting: \"\(truncate(question, at: maxLength))\""
     }
 
     /// The final question line of an assistant message, when the message ends
@@ -178,10 +178,10 @@ struct SessionCard: Identifiable, Equatable {
 
     static func label(of state: SessionState) -> String {
         switch state {
-        case .idle: "démarrée"
-        case .running: "en cours"
-        case .ended: "terminée"
-        case .waiting: "attend"
+        case .idle: "started"
+        case .running: "working"
+        case .ended: "done"
+        case .waiting: "waiting"
         }
     }
 

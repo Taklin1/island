@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var botSheet: CGImage? = SpriteSheet.bot.image(named: "bot")
     /// Mise à jour (issue #91, ADR-0010): the ref to the version menu item of
     /// #88 — the menu is built once and never rebuilt, so the title mutates in
-    /// place ("island vX.Y.Z — à jour" ↔ "⬆ Mettre à jour vers vY.Z…").
+    /// place ("island vX.Y.Z — up to date" ↔ "⬆ Update to vY.Z…").
     private var versionMenuItem: NSMenuItem?
     /// Daily update check (issue #91); the launch check covers a Mac waking
     /// from sleep or relaunching, no calendar scheduler needed.
@@ -373,10 +373,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             print("island: update verdict=unknown (dev build or no comparable release, trigger=\(trigger))")
         case .upToDate:
             print("island: update verdict=up-to-date (v\(currentVersion), trigger=\(trigger))")
-            setVersionMenuItem(title: "island v\(currentVersion) — à jour", updateAvailable: false)
+            setVersionMenuItem(title: "island v\(currentVersion) — up to date", updateAvailable: false)
         case .updateAvailable(let version, let notify):
             print("island: update available v\(version) (notify=\(notify), trigger=\(trigger))")
-            setVersionMenuItem(title: "⬆ Mettre à jour vers v\(version)…", updateAvailable: true)
+            setVersionMenuItem(title: "⬆ Update to v\(version)…", updateAvailable: true)
             if notify {
                 postUpdateNotification(version: version)
                 settings.lastNotifiedUpdateVersion = version
@@ -437,8 +437,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 let content = UNMutableNotificationContent()
                 content.title = "island"
-                content.body = "Mise à jour disponible : v\(version). "
-                    + "Ouvrez le menu island pour l'installer."
+                content.body = "Update available: v\(version). "
+                    + "Open the island menu to install it."
                 let request = UNNotificationRequest(
                     identifier: "island-update-\(version)", content: content, trigger: nil)
                 try await center.add(request)
@@ -454,7 +454,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in await self.runUpdateCheck(trigger: "menu") }
     }
 
-    /// Clicking "⬆ Mettre à jour vers vY.Z…" (issue #92, ADR-0010): hands off
+    /// Clicking "⬆ Update to vY.Z…" (issue #92, ADR-0010): hands off
     /// to install.sh — the same script as the Canal d'installation, which will
     /// quit this process, replace ~/Applications/island.app and relaunch. No
     /// confirmation step: the explicit click IS the consent. One trace per
@@ -576,8 +576,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Version embarquée (issue #88, US5): the resting menu shows which
         // build runs. Display-only — no action, and explicitly disabled since
         // autoenablesItems is off. The update check (issue #91) keeps a ref
-        // and mutates this item in place ("island vX.Y.Z — à jour" ↔
-        // "⬆ Mettre à jour vers vY.Z…"); the menu itself is never rebuilt.
+        // and mutates this item in place ("island vX.Y.Z — up to date" ↔
+        // "⬆ Update to vY.Z…"); the menu itself is never rebuilt.
         let version = NSMenuItem(
             title: "island v\(AppVersion.current.value)", action: nil, keyEquivalent: "")
         version.isEnabled = false
@@ -588,7 +588,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // daily checks — every verdict lands as a stdout trace + the version
         // item title above.
         let checkForUpdates = NSMenuItem(
-            title: "Vérifier les mises à jour…",
+            title: "Check for updates…",
             action: #selector(checkForUpdatesClicked), keyEquivalent: "")
         checkForUpdates.target = self
         menu.addItem(checkForUpdates)
@@ -596,33 +596,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         let border = NSMenuItem(
-            title: "Liseré", action: #selector(toggleBorder(_:)), keyEquivalent: "")
+            title: "Edge outline", action: #selector(toggleBorder(_:)), keyEquivalent: "")
         border.target = self
         border.state = settings.borderEnabled ? .on : .off
         menu.addItem(border)
 
         let sound = NSMenuItem(
-            title: "Son", action: #selector(toggleSound(_:)), keyEquivalent: "")
+            title: "Sound", action: #selector(toggleSound(_:)), keyEquivalent: "")
         sound.target = self
         sound.state = settings.soundEnabled ? .on : .off
         menu.addItem(sound)
 
         let mascot = NSMenuItem(
-            title: "Afficher l'Icône animée",
+            title: "Show the menu-bar mascot",
             action: #selector(toggleMenuBarIcon(_:)), keyEquivalent: "")
         mascot.target = self
         mascot.state = settings.menuBarIconEnabled ? .on : .off
         menu.addItem(mascot)
 
         let tee = NSMenuItem(
-            title: "Quotas via la statusline",
+            title: "Quotas via the statusline",
             action: #selector(toggleStatuslineTee(_:)), keyEquivalent: "")
         tee.target = self
         tee.state = settings.statuslineTeeEnabled ? .on : .off
         menu.addItem(tee)
 
         let answer = NSMenuItem(
-            title: "Réponse depuis l'Island",
+            title: "Answer from the Island",
             action: #selector(toggleAnswerFromIsland(_:)), keyEquivalent: "")
         answer.target = self
         answer.state = settings.answerFromIslandEnabled ? .on : .off
@@ -631,7 +631,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         let login = NSMenuItem(
-            title: "Ouvrir à la connexion", action: #selector(toggleLoginItem(_:)),
+            title: "Open at login", action: #selector(toggleLoginItem(_:)),
             keyEquivalent: "")
         login.target = self
         login.state = LoginItem.isEnabled ? .on : .off
@@ -640,13 +640,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         let install = NSMenuItem(
-            title: "Réinstaller les hooks Claude Code",
+            title: "Reinstall the Claude Code hooks",
             action: #selector(reinstallHooks), keyEquivalent: "")
         install.target = self
         menu.addItem(install)
 
         let uninstall = NSMenuItem(
-            title: "Désinstaller les hooks Claude Code",
+            title: "Uninstall the Claude Code hooks",
             action: #selector(uninstallHooks), keyEquivalent: "")
         uninstall.target = self
         menu.addItem(uninstall)
@@ -654,7 +654,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         let quit = NSMenuItem(
-            title: "Quitter Island", action: #selector(NSApplication.terminate(_:)),
+            title: "Quit Island", action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q")
         quit.target = NSApplication.shared
         menu.addItem(quit)

@@ -3,8 +3,8 @@
 **But** : vérification **VISUELLE** (le seul canal qui tranche pour le rendu
 SwiftUI) de la carte Étendue — (1) le **titre de session** s'affiche en haut de
 la carte (#32), le chemin du projet en dessous ; (2) un **compte discret**
-« ⋯ N tâches de fond en cours » apparaît tant qu'une tâche de fond est vivante —
-ici un Sous-agent (#48/Q6, élargi #79).
+« ⋯ N background tasks running » (libellé EN, ADR-0012) apparaît tant qu'une
+tâche de fond est vivante — ici un Sous-agent (#48/Q6, élargi #79).
 
 **Couvre** : #32 (titre sur carte Étendue) + #48/Q6 (compte discret).
 
@@ -49,7 +49,7 @@ ici un Sous-agent (#48/Q6, élargi #79).
    - Le **titre** « Corrige le crash du parser » s'affiche en haut de la carte
      (et non le seul nom de projet `island`).
    - Le **chemin du projet** apparaît sous le titre.
-   - La ligne discrète **« ⋯ 1 tâche de fond en cours »** est présente.
+   - La ligne discrète **« ⋯ 1 background task running »** est présente.
    - La trace `island: [ts] expanded on hover: N session card(s)` confirme
      l'ouverture de l'Étendu.
 
@@ -57,7 +57,7 @@ ici un Sous-agent (#48/Q6, élargi #79).
 
 - Screenshot montrant le titre de session en tête de carte + le chemin dessous
   (#32).
-- Screenshot montrant « ⋯ 1 tâche de fond en cours » tant que le Sous-agent est
+- Screenshot montrant « ⋯ 1 background task running » tant que le Sous-agent est
   vivant (#48/Q6).
 - Le mode Étendu s'est bien ouvert (trace `expanded on hover`), curseur rendu.
 

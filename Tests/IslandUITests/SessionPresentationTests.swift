@@ -11,7 +11,7 @@ struct SessionPresentationTests {
     // The compact bar itself is covered by SpriteTests (issue #11): one
     // Sprite per Session, its animation encoding the state.
 
-    @Test("A Session card carries project, French state, prompt and tool")
+    @Test("A Session card carries project, state, prompt and tool")
     func sessionCardCarriesTheExpandedFields() {
         let session = Session(
             id: "abc123",
@@ -27,7 +27,7 @@ struct SessionPresentationTests {
 
         #expect(card.project == "island")
         #expect(card.location == "~/Documents/island")
-        #expect(card.stateLabel == "en cours")
+        #expect(card.stateLabel == "working")
         #expect(card.lastPrompt == "Fix the login bug")
         #expect(card.currentTool == "Bash")
         #expect(card.turnStartedAt == Date(timeIntervalSince1970: 42))
@@ -48,8 +48,8 @@ struct SessionPresentationTests {
 
         // Type-neutral wording (#79): the count mixes Sous-agents, workflows…
         #expect(label(0) == nil) // nothing to show
-        #expect(label(1) == "1 tâche de fond en cours")
-        #expect(label(3) == "3 tâches de fond en cours")
+        #expect(label(1) == "1 background task running")
+        #expect(label(3) == "3 background tasks running")
     }
 
     // MARK: - Session title header (issue #32)
@@ -98,15 +98,15 @@ struct SessionPresentationTests {
         #expect(a.location == b.location)
     }
 
-    @Test("Session states map to French labels")
-    func statesMapToFrenchLabels() {
+    @Test("Session states map to labels")
+    func statesMapToLabels() {
         func card(_ state: SessionState) -> SessionCard {
             SessionCard(session: Session(id: "x", state: state, agent: "claude-code"), home: "/Users/loic")
         }
 
-        #expect(card(.idle).stateLabel == "démarrée")
-        #expect(card(.running).stateLabel == "en cours")
-        #expect(card(.ended).stateLabel == "terminée")
+        #expect(card(.idle).stateLabel == "started")
+        #expect(card(.running).stateLabel == "working")
+        #expect(card(.ended).stateLabel == "done")
     }
 
     @Test("Elapsed turn duration is rendered compactly")
@@ -135,7 +135,7 @@ struct SessionPresentationTests {
         let card = SessionCard(session: session, home: "/Users/loic")
 
         #expect(card.summaryText == "Fixed the parser crash.\n\n- added a regression test")
-        #expect(card.summaryFacts == "todos 1/3 · 1 fichier · 3:20")
+        #expect(card.summaryFacts == "todos 1/3 · 1 file · 3:20")
     }
 
     @Test("The facts line only shows what the extraction found")
@@ -151,7 +151,7 @@ struct SessionPresentationTests {
         #expect(card(TurnSummary(text: "Done.")).summaryFacts == nil)
         #expect(
             card(TurnSummary(filesModified: ["/a/b.swift", "/a/c.swift"])).summaryFacts
-                == "2 fichiers")
+                == "2 files")
         #expect(card(TurnSummary(turnDuration: 65)).summaryFacts == "1:05")
     }
 
@@ -188,7 +188,7 @@ struct SessionPresentationTests {
         #expect(long.hasSuffix("…"))
 
         // No summary: the Peek keeps its historical fallback.
-        #expect(SessionCard.peekLine(project: "island", summaryText: nil) == "island ✓ terminé")
+        #expect(SessionCard.peekLine(project: "island", summaryText: nil) == "island ✓ done")
     }
 
     @Test("The waiting Peek shows a final question, or the call to action (#39)")
@@ -196,21 +196,21 @@ struct SessionPresentationTests {
         // A turn ending on a question: show the question itself.
         #expect(
             SessionCard.waitingPeekLine(project: "island", questionText: "Postgres or SQLite?")
-                == "island · attend : \"Postgres or SQLite?\"")
+                == "island · waiting: \"Postgres or SQLite?\"")
 
         // The final question line wins over an earlier lead-in line.
         #expect(
             SessionCard.waitingPeekLine(
                 project: "island",
                 questionText: "I looked into it.\nShall I proceed with option A?")
-                == "island · attend : \"Shall I proceed with option A?\"")
+                == "island · waiting: \"Shall I proceed with option A?\"")
 
         // No question (nil, or a text that does not end on '?'): the historical
         // call to action — a permission/AskUserQuestion wait carries no question.
         #expect(SessionCard.waitingPeekLine(project: "island", questionText: nil)
-            == "island ? attend une réponse")
+            == "island ? waiting for a reply")
         #expect(SessionCard.waitingPeekLine(project: "island", questionText: "All done.")
-            == "island ? attend une réponse")
+            == "island ? waiting for a reply")
 
         // A very long question is cut on a word boundary with an ellipsis.
         let long = SessionCard.waitingPeekLine(
