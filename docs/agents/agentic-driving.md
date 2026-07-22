@@ -175,6 +175,19 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
 - **Pourquoi** : justesse — sans traces, une vérif HITL ne départage pas « le
   clic n'atteint pas le handler » de « l'action aval échoue en silence » ; la
   seule trace `card activated` scinde cet arbre en deux dès le premier clic.
+- **LIMITE (spike #87, 2026-07-21) : cette méthode ne mesure PAS la permission
+  Accessibilité.** Lancée par `nohup` depuis un shell, island hérite du
+  « responsible process » TCC du **terminal** (Ghostty, qui a l'Accessibilité) :
+  `AXIsProcessTrusted()` répond `granted` même après `tccutil reset Accessibility
+  com.taklin.island`. Pour toute mesure TCC (trace `accessibility permission`),
+  lancer via un **LaunchAgent** — island devient son propre responsible process
+  ET la trace reste capturée (`StandardOutPath`) :
+  ```bash
+  launchctl bootstrap "gui/$(id -u)" <plist>     # RunAtLoad, KeepAlive=false
+  launchctl kickstart -k "gui/$(id -u)/<label>"  # relances
+  launchctl bootout "gui/$(id -u)/<label>"       # fin de campagne
+  ```
+  Protocole complet : `docs/spikes/87-certificat-stable-accessibilite.md`.
 
 ## Comportement des hooks : capturer le fil réel avant de coder une détection
 

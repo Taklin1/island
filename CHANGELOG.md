@@ -3,6 +3,26 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.28
+
+- #92 Mise à jour en un clic : le clic « ⬆ Mettre à jour vers vY.Z… » exécute `install.sh` via un seam live-only (`UpdateInstaller`, garde `-dev` non contournable), script téléchargé validé avant exécution, trace dans `~/Library/Logs/island-update.log` ; remplacement réel N→N+1 (app relancée, Accessibilité conservée) prouvé au gate HITL sur app packagée. (Épic #85, PR #106.)
+
+## 0.1.27
+
+- #90 CI de release : premier workflow du repo (`.github/workflows/release.yml`), déclenché au tag `vX.Y.Z` sur `main` (ou `workflow_dispatch` = dry-run en draft jetable) ; garde fail-fast tag == tête de `CHANGELOG.md` avant build, toolchain Swift 6 épinglé, import du certificat stable `island-release` (secrets `ISLAND_CERT_P12`/`ISLAND_CERT_P12_PASSWORD`, spike #87) dans un keychain jetable + trust code-signing, build/signature via `package_app.sh --release` (identité paramétrée `ISLAND_CODESIGN_IDENTITY`, ad-hoc local inchangé), assertions `Authority=island-release` + version nue, asset `island.zip` (`ditto --keepParent`, contrat `install.sh` #89) attaché à la GitHub Release. (Épic #85, PR #102.)
+
+## 0.1.26
+
+- #91 Détection de mise à jour : verdict pur (`UpdateCheckGate`, comparaison sémantique) sur l'API GitHub Releases via seam `UpdateFetcher` (fixtures réelles capturées), item de menu muté en place (« island vX.Y.Z — à jour » ↔ « ⬆ Mettre à jour vers vY.Z… ») + « Vérifier les mises à jour… », UNE notification macOS par version (persistée) ; un build `-dev` ne propose jamais rien, hors-ligne silencieux, surfaces Sessions intactes ; clic no-op tracé (branché en #92). (Épic #85, PR #97.)
+
+## 0.1.25
+
+- #89 Canal d'installation : `scripts/install.sh`, one-liner `curl … | sh` qui installe/met à jour island depuis la dernière GitHub Release (asset `island.zip` en URL directe, sans quarantaine ni Gatekeeper, remplacement à chaud sans double process, idempotent — c'est aussi le futur updater). FP prouvé sur le vrai canal, repo passé en public (prérequis ADR-0010). (Épic #85, PR #96.)
+
+## 0.1.24
+
+- #88 Version embarquée : builds locaux packagés en `X.Y.Z-dev` (`--release` pour la version nue, futur usage CI), trace `island: version …` au lancement et version affichée en tête du menu de la barre des menus ; repli `0.0.0-dev` pour le binaire SwiftPM nu — socle de la garde « un build `-dev` ne se met jamais à jour » (ADR-0010, épic #85, PR #95).
+
 ## 0.1.23
 
 - #70 Une Session « en attente » n'expose plus d'outil en cours : le cas `.waitingForUser` de `SessionStore.apply` remet `session.currentTool = nil` à l'entrée **effective** en attente (dans la garde `state != .ended`, non-régression #31), supprimant le libellé « outil : … » fantôme qui restait au-dessus de la question/message quand un `PreToolUse` précédait la `Notification`. Vaut pour les questions comme pour les permissions. (Épopée #22.)

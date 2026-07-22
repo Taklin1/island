@@ -15,6 +15,7 @@ struct AppSettings {
     static let menuBarIconEnabledKey = "menuBarIconEnabled"
     static let answerFromIslandEnabledKey = "answerFromIslandEnabled"
     static let answerFromIslandOnboardingPromptedKey = "answerFromIslandOnboardingPrompted"
+    static let lastNotifiedUpdateVersionKey = "lastNotifiedUpdateVersion"
 
     private let defaults: UserDefaults
 
@@ -77,6 +78,16 @@ struct AppSettings {
     var answerFromIslandOnboardingPrompted: Bool {
         get { defaults.bool(forKey: Self.answerFromIslandOnboardingPromptedKey) }
         nonmutating set { defaults.set(newValue, forKey: Self.answerFromIslandOnboardingPromptedKey) }
+    }
+
+    /// Mise à jour (issue #91): the last version a macOS notification was
+    /// posted for — one notification per version, ever (ADR-0010). Read by
+    /// the caller of `UpdateCheckGate` and written by the notification
+    /// handler AFTER the post, never by the pure gate. Nil until the first
+    /// notified update (no `register` default needed).
+    var lastNotifiedUpdateVersion: String? {
+        get { defaults.string(forKey: Self.lastNotifiedUpdateVersionKey) }
+        nonmutating set { defaults.set(newValue, forKey: Self.lastNotifiedUpdateVersionKey) }
     }
 }
 

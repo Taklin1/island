@@ -67,6 +67,14 @@ _Avoid_ : nom de session, label
 **Quotas** :
 Jauges d'usage Claude (fenêtres 5 h et 7 jours, % de contexte) reçues via le tee de la statusline.
 
+**Canal d'installation** :
+Le chemin officiel par lequel island s'installe : un script une-ligne exécuté au terminal (`curl … | sh`) qui installe la dernière Release GitHub — jamais un téléchargement navigateur mis en avant (ADR-0010). La Release (zip taggé `vX.Y.Z` sur `main`, fabriqué par la CI) est la forme téléchargeable de la prod ; `main` est sa base de vérité.
+_Avoid_ : .dmg, App Store, download page
+
+**Mise à jour** :
+Remplacement d'island.app installée par la dernière Release, déclenché par un clic explicite de l'utilisateur (item du menu barre des menus « Mettre à jour vers vY.Z… », signalé par une notification macOS unique par version) et exécuté par le même script que le Canal d'installation. Jamais silencieuse, jamais montrée sur les surfaces Sessions (cartes, Peek, Liseré) ; un build de dev local (`-dev`) ne se met jamais à jour.
+_Avoid_ : auto-update silencieux, upgrade
+
 **Click-to-focus** :
 Action de cliquer une carte de Session pour ramener le focus sur son terminal (Ghostty) : la **fenêtre exacte** de la Session quand elle est une Cible certaine (une seule fenêtre au cwd de la Session — même verdict d'unicité que l'Injection, sans ses gardes supplémentaires : aucune frappe en jeu, une erreur de fenêtre est bénigne), sinon l'app entière comme avant. Le ciblage fenêtre requiert la permission Accessibilité mais reste **indépendant du réglage Injection** (qui ne gouverne que les frappes) ; sans permission, le clic focus l'app immédiatement et guide une fois vers Réglages Système (latch d'onboarding **partagé** avec l'Injection — un seul guidage pour toute l'app, jamais bloquant). Limites héritées de l'Accessibilité (capture #81) : fenêtre dans un autre Space ou Session dans un onglet caché → cible incertaine → app entière.
 

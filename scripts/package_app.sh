@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 #
-# Packages island into a real, ad-hoc-signed `island.app` bundle and installs
-# it to ~/Applications (no sudo). Personal/local use only: ad-hoc signature
-# (`codesign -s -`), no notarization, no Developer ID, no distribution.
+# Packages island into a real, signed `island.app` bundle and installs it to
+# ~/Applications (no sudo). Ad-hoc signature (`codesign -s -`) by default for
+# local/dev use; the release CI overrides ISLAND_CODESIGN_IDENTITY to sign with
+# the stable certificate (release.yml, ADR-0010). No notarization, no Developer
+# ID.
 #
 # Why a bundle: SMAppService (the login item) and the menu-bar lifecycle need a
 # genuine .app — the bare SwiftPM binary fails to register (issue #6, ADR notes
 # in docs/agents/agentic-driving.md).
 #
 # Repeatable — run any time after a build:
-#     scripts/package_app.sh            # build, bundle, sign, install
+#     scripts/package_app.sh            # build, bundle, sign, install (X.Y.Z-dev)
 #     scripts/package_app.sh --no-install   # build, bundle, sign only
+#     scripts/package_app.sh --release  # bare X.Y.Z version (CI use, ADR-0010)
+#
+# Version: read from the top of CHANGELOG.md, suffixed `-dev` by default so a
+# local build is distinguishable from a release and never self-updates (US15);
+# `--release` keeps the bare version (future CI packaging, release.yml).
 #
 # Requires: Command Line Tools (swift, codesign, iconutil already used to make
 # the icon). No full Xcode needed.
@@ -25,11 +32,18 @@ INSTALL_DIR="${HOME}/Applications"
 DIST_DIR="${REPO_ROOT}/.build/dist"     # gitignored (.build/)
 APP_DIR="${DIST_DIR}/${APP_NAME}.app"
 RESOURCE_BUNDLE="Island_IslandUI.bundle"
+# Signing identity: ad-hoc `-` by default (local/dev, ADR-0005). The release CI
+# (release.yml, ADR-0010) exports ISLAND_CODESIGN_IDENTITY=island-release so the
+# stable certificate signs the bundle and the Accessibility permission survives
+# updates. One signing path — the workflow never re-signs afterwards.
+CODESIGN_IDENTITY="${ISLAND_CODESIGN_IDENTITY:--}"
 
 INSTALL=1
+RELEASE=0
 for arg in "$@"; do
     case "$arg" in
         --no-install) INSTALL=0 ;;
+        --release) RELEASE=1 ;;
         *) echo "unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
@@ -40,6 +54,12 @@ VERSION="$(grep -m1 -Eo '^## [0-9]+\.[0-9]+\.[0-9]+' "${REPO_ROOT}/CHANGELOG.md"
 if [[ -z "${VERSION}" ]]; then
     echo "error: could not read version from CHANGELOG.md" >&2
     exit 1
+fi
+# Local builds are marked `-dev` (never self-update, US15/ADR-0010); only an
+# explicit --release (CI) keeps the bare version. Suffix AFTER the extraction
+# so the CHANGELOG grep format stays untouched.
+if [[ "${RELEASE}" -eq 0 ]]; then
+    VERSION="${VERSION}-dev"
 fi
 echo "==> island ${VERSION} (bundle id: ${BUNDLE_ID})"
 
@@ -127,11 +147,11 @@ ${ICON_KEY}
 </plist>
 PLIST
 
-# --- Ad-hoc sign (personal/local only) ---------------------------------------
-echo "==> codesign (ad-hoc)"
-codesign --force --deep --sign - "${APP_DIR}"
+# --- Sign (ad-hoc locally, stable certificate in release CI) -----------------
+echo "==> codesign (${CODESIGN_IDENTITY})"
+codesign --force --deep --sign "${CODESIGN_IDENTITY}" "${APP_DIR}"
 codesign --verify --verbose "${APP_DIR}"
-codesign -dv "${APP_DIR}" 2>&1 | grep -Ei 'Identifier|Signature|TeamIdentifier' || true
+codesign -dv "${APP_DIR}" 2>&1 | grep -Ei 'Identifier|Signature|Authority|TeamIdentifier' || true
 
 # --- Install -----------------------------------------------------------------
 if [[ "${INSTALL}" -eq 1 ]]; then
