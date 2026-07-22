@@ -1,9 +1,10 @@
-# HP-04 — Carte Étendue : titre de session + compte discret Sous-agents
+# HP-04 — Carte Étendue : titre de session + compte discret des tâches de fond
 
 **But** : vérification **VISUELLE** (le seul canal qui tranche pour le rendu
 SwiftUI) de la carte Étendue — (1) le **titre de session** s'affiche en haut de
 la carte (#32), le chemin du projet en dessous ; (2) un **compte discret**
-« ⋯ N sous-agents en cours » apparaît tant qu'un Sous-agent est vivant (#48/Q6).
+« ⋯ N tâches de fond en cours » apparaît tant qu'une tâche de fond est vivante —
+ici un Sous-agent (#48/Q6, élargi #79).
 
 **Couvre** : #32 (titre sur carte Étendue) + #48/Q6 (compte discret).
 
@@ -38,17 +39,17 @@ la carte (#32), le chemin du projet en dessous ; (2) un **compte discret**
    ```
 
 3. **Stop** constat avec un Sous-agent vivant (pour afficher le compte) ⇒
-   `running ×1sub`.
+   `running ×1bg`.
    ```json
    {"session_id":"hp-expanded-1","transcript_path":"/tmp/hp-expanded-1.jsonl","cwd":"/Users/loic/Documents/island","hook_event_name":"Stop","last_assistant_message":"Sous-agent lancé…","background_tasks":[{"id":"sub-1","type":"subagent","status":"running"}]}
    ```
-   Attendu trace : `island[hp-expanded-1]=running ×1sub`.
+   Attendu trace : `island[hp-expanded-1]=running ×1bg`.
 
 4. Ouvrir l'Étendu (hover synthétique) et screenshoter. **Vérif visuelle** :
    - Le **titre** « Corrige le crash du parser » s'affiche en haut de la carte
      (et non le seul nom de projet `island`).
    - Le **chemin du projet** apparaît sous le titre.
-   - La ligne discrète **« ⋯ 1 sous-agent en cours »** est présente.
+   - La ligne discrète **« ⋯ 1 tâche de fond en cours »** est présente.
    - La trace `island: [ts] expanded on hover: N session card(s)` confirme
      l'ouverture de l'Étendu.
 
@@ -56,7 +57,7 @@ la carte (#32), le chemin du projet en dessous ; (2) un **compte discret**
 
 - Screenshot montrant le titre de session en tête de carte + le chemin dessous
   (#32).
-- Screenshot montrant « ⋯ 1 sous-agent en cours » tant que le Sous-agent est
+- Screenshot montrant « ⋯ 1 tâche de fond en cours » tant que le Sous-agent est
   vivant (#48/Q6).
 - Le mode Étendu s'est bien ouvert (trace `expanded on hover`), curseur rendu.
 

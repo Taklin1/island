@@ -11,8 +11,9 @@ vivant — le gate ne concerne que le **vert**.
 ## Pré-requis
 
 Identiques à HP-01. Sessions namespacées `hp-gate-*`. Forme de fixture vérifiée
-(tableau JSON `background_tasks`, filtre `type == "subagent"` + `id` non vide ;
-`session_crons` ne compte pas).
+(tableau JSON `background_tasks` ; depuis #79 le gate compte **toute** entrée
+avec un `id` non vide, quel que soit son `type` — Sous-agent, workflow, shell… ;
+`session_crons` est un champ séparé et ne compte pas).
 
 ## Étapes
 
@@ -27,14 +28,14 @@ Identiques à HP-01. Sessions namespacées `hp-gate-*`. Forme de fixture vérifi
    ```json
    {"session_id":"hp-gate-1","transcript_path":"/tmp/hp-gate-1.jsonl","cwd":"/Users/loic/Documents/island","hook_event_name":"Stop","last_assistant_message":"En cours d'exploration…","background_tasks":[{"id":"sub-1","type":"subagent","status":"running"}]}
    ```
-   Attendu trace : `island[hp-gate-1]=running ×1sub+summary`.
-   Le `×1sub` prouve que le count a été décodé et que le gate a tenu (pas de vert).
+   Attendu trace : `island[hp-gate-1]=running ×1bg+summary`.
+   Le `×1bg` prouve que le count a été décodé et que le gate a tenu (pas de vert).
 
 3. **Stop** suivant, `background_tasks` **vide** (le Sous-agent a fini) ⇒ `ended`.
    ```json
    {"session_id":"hp-gate-1","transcript_path":"/tmp/hp-gate-1.jsonl","cwd":"/Users/loic/Documents/island","hook_event_name":"Stop","last_assistant_message":"Exploration terminée.","background_tasks":[]}
    ```
-   Attendu : `island[hp-gate-1]=ended` (plus de `×sub`).
+   Attendu : `island[hp-gate-1]=ended` (plus de `×bg`).
 
 ### B. Contrôle Q5 — question + Sous-agent vivant ⇒ orange IMMÉDIAT
 
@@ -60,7 +61,7 @@ Identiques à HP-01. Sessions namespacées `hp-gate-*`. Forme de fixture vérifi
 
 ## Critères de réussite
 
-- A : Sous-agent vivant + constat ⇒ `running ×1sub`, jamais de flash `ended` ;
+- A : Sous-agent vivant + constat ⇒ `running ×1bg`, jamais de flash `ended` ;
   puis liste vide ⇒ `ended`.
 - B : Sous-agent vivant + question ⇒ `waiting` immédiat (Q5).
 - C : `background_tasks` mal formé ⇒ repli à 0, `Stop` résolu normalement.
