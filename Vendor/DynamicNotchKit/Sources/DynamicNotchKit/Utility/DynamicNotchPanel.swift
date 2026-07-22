@@ -42,7 +42,17 @@ final class DynamicNotchPanel: NSPanel {
         self.hasShadow = false
         self.backgroundColor = .clear
         self.level = .screenSaver
-        self.collectionBehavior = [.canJoinAllSpaces, .stationary]
+        // island patch (issue #103): `.fullScreenAuxiliary` so the panel can join
+        // a full-screen app's Space — without it, `.canJoinAllSpaces` alone never
+        // reaches a full-screen Space and the Island stays invisible above one
+        // (no Peek, no Reveal). The Liseré's `GlowWindow` already carries the
+        // flag and shows over full-screen apps, proving the recipe: a
+        // non-activating, high-level window with `.canJoinAllSpaces` +
+        // `.fullScreenAuxiliary` + `.stationary`. Verified absent from upstream
+        // 1.1.0 (latest tag) and `main` — both ship `[.canJoinAllSpaces,
+        // .stationary]`. Not upstream — remove/reconcile if switching back to the
+        // package URL. Guard: `Tests/DynamicNotchKitTests/DynamicNotchPanelTests`.
+        self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
     }
 
     override var canBecomeKey: Bool {

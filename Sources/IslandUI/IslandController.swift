@@ -70,13 +70,29 @@ public final class IslandController {
     /// second tap during the ~500 ms verification await.
     private var answerInFlight: Set<String> = []
     private var knownWaitingSessionIDs: Set<String> = []
+    /// Recede timer of a live Peek (#99): armed on deploy and re-armed on every
+    /// coalesced marking event, so a burst is ONE continuous surface that only
+    /// folds back to Masqué a Peek's duration after the *last* event.
     private var peekTask: Task<Void, Never>?
     /// Anti-flicker grace before the revealed Island recedes to Masqué.
     private var recedeTask: Task<Void, Never>?
     private var mode: Mode = .hidden
+    /// The marking (Session id + state) the current Peek announces (#99). A new
+    /// marking event that matches it is a redundant re-announcement (an
+    /// ADR-0008 gate flip, a statusline re-emit) and updates nothing; a
+    /// different one swaps the Sprite/text in place — never a teardown+redeploy.
+    /// `nil` while Masqué.
+    private var peekMarking: (id: String, state: SessionState)?
+    /// How many times a *new* Peek window was surfaced from Masqué (#99). A
+    /// burst of marking events must coalesce into ONE continuous surface, so
+    /// this stays at 1 across the whole burst — the anti-pump invariant the unit
+    /// tests assert (the window monte/descend has no other reachable signal
+    /// without a real panel).
+    private(set) var peekSurfaceCount = 0
 
-    /// How long a Peek stays on screen before folding back to Masqué.
-    private let peekDuration: Duration = .seconds(2.5)
+    /// How long a Peek stays on screen before folding back to Masqué. Injectable
+    /// so the coalescence tests can drive the recede deterministically (#99).
+    private let peekDuration: Duration
     /// Grace delay before a hover-off recedes the Étendu to Masqué: bridges the
     /// brief gap between the top-edge gesture and the pointer landing on the
     /// panel, so the Island does not flicker shut mid-reveal.
@@ -104,13 +120,15 @@ public final class IslandController {
         quotaStore: QuotaStore = QuotaStore(),
         focusTerminal: ((_ terminal: String?, _ cwd: String?) -> Void)? = nil,
         refreshTitles: (() -> Void)? = nil,
-        injectAnswer: ((_ cwd: String?, _ optionIndex: Int) async -> Bool)? = nil
+        injectAnswer: ((_ cwd: String?, _ optionIndex: Int) async -> Bool)? = nil,
+        peekDuration: Duration = .seconds(2.5)
     ) {
         self.store = store
         self.quotaStore = quotaStore
         self.focusTerminal = focusTerminal
         self.refreshTitles = refreshTitles
         self.injectAnswer = injectAnswer
+        self.peekDuration = peekDuration
         viewModel.activateSession = { [weak self] sessionID in
             self?.cardActivated(sessionID: sessionID)
         }
@@ -187,7 +205,11 @@ public final class IslandController {
             .store(in: &cancellables)
     }
 
-    private func sessionsDidChange(_ sessions: [Session]) {
+    /// The throttled sink handler: reconciles the cards and fires a Peek for the
+    /// most pressing newly-marking Session. Internal (not private) so the
+    /// coalescence tests (#99) can drive the exact burst sequence directly,
+    /// bypassing the Combine throttle whose behaviour is orthogonal.
+    func sessionsDidChange(_ sessions: [Session]) {
         setCards(from: sessions)
         log("sessions: \(Self.sessionsTrace(for: sessions))")
 
@@ -355,8 +377,10 @@ public final class IslandController {
     /// Deliberate Reveal from the global mouse monitor: the cursor was pinned to
     /// the top-centre edge (``shouldReveal(at:in:sessionCount:)`` already vetted
     /// the geometry and the ≥1-Session rule), so deploy the Étendu. Works at any
-    /// time — rest or waiting — and over a full-screen app (the panel is
-    /// `.screenSaver` + `.canJoinAllSpaces`). Never acknowledges: looking ≠
+    /// time — rest or waiting — and over a full-screen app: the vendored panel is
+    /// `.screenSaver` + `.canJoinAllSpaces` + `.fullScreenAuxiliary`, the last of
+    /// which is what actually lets it join a full-screen Space (issue #103 — the
+    /// level and `.canJoinAllSpaces` alone do not). Never acknowledges: looking ≠
     /// treating (ADR-0007).
     public func reveal() {
         expandToExtended(trigger: "révélation")
@@ -377,6 +401,14 @@ public final class IslandController {
     /// Test seam (issue #60): whether the Étendu is currently deployed, so the
     /// recede tests can assert the fold without reaching into the private `mode`.
     var isExtendedDeployed: Bool { mode == .expanded }
+
+    /// Test seam (#99): whether a Peek is currently surfaced, so the coalescence
+    /// tests can assert the single continuous surface without reaching `mode`.
+    var isPeeking: Bool { mode == .peek }
+
+    /// Test seam (#99): the Session the current Peek announces, so a burst test
+    /// can assert the Sprite/text was swapped in place to the latest one.
+    var peekedSessionID: String? { viewModel.peekSessionID }
 
     /// Whether the top-edge gesture should Reveal the Island: cursor pinned to
     /// the top edge (Cocoa `maxY`) *and* inside the centred ~280 pt band near
@@ -458,6 +490,7 @@ public final class IslandController {
                 self.notch?.isHovering != true
             else { return }
             self.mode = .hidden
+            self.peekMarking = nil
             self.viewModel.showCards = false
             self.log("masqué (curseur quitte le panneau)")
             await self.notch?.hide()
@@ -468,26 +501,69 @@ public final class IslandController {
 
     /// Surfaces the Island in a transient Peek, then recedes to Masqué. Never
     /// fights the Étendu: while revealed, no Peek (ADR-0007, issue #53).
+    ///
+    /// Coalescence (#99): a marking event that arrives while a Peek is already
+    /// out never tears the panel down to redeploy it (the "ça pompe"
+    /// monte/descend, and the cross-fade of a re-Peek landing on a fade-out). It
+    /// swaps the Sprite and text in place when the marking changed — a different
+    /// Session or a different state — and leaves them untouched on a redundant
+    /// re-announcement (an ADR-0008 gate flip, a statusline re-emit). Either way
+    /// it re-arms the recede, so a whole burst is ONE continuous surface that
+    /// folds back to Masqué a Peek's duration after the *last* event. Only a Peek
+    /// surfaced from Masqué opens a window (and bumps `peekSurfaceCount`), so the
+    /// recede's `hide()` never races a re-Peek's `expand()`.
     private func peek(for session: Session) {
         guard mode != .expanded else { return }
+        let marking = (id: session.id, state: session.state)
+
+        if mode == .peek {
+            // Already surfaced: coalesce into the single live window. Only touch
+            // the content when the marking actually changed, so an identical
+            // re-announcement causes no view churn — but always re-arm so the
+            // burst stays one continuous surface.
+            if peekMarking?.id != marking.id || peekMarking?.state != marking.state {
+                applyPeekContent(for: session)
+                peekMarking = marking
+                log("peek (coalescé): \(viewModel.peekText)")
+            }
+            armPeekRecede()
+            return
+        }
+
+        // From Masqué: surface exactly one window.
+        applyPeekContent(for: session)
+        peekMarking = marking
+        mode = .peek
+        peekSurfaceCount += 1
+        recedeTask?.cancel()
+        Task { [weak self] in await self?.notch?.expand() }
+        log("peek: \(viewModel.peekText)")
+        armPeekRecede()
+    }
+
+    /// Sets the Peek's Sprite, announcement text and target Session, and makes
+    /// the panel show the Peek (not the cards) whatever the last Reveal left.
+    private func applyPeekContent(for session: Session) {
         viewModel.peekText = Self.peekText(for: session)
         viewModel.peekAnimation = Self.peekAnimation(for: session)
         viewModel.peekSessionID = session.id
-        // A Peek shows the peek text, not the cards, whatever the last Reveal left.
         viewModel.showCards = false
+    }
 
+    /// (Re)arms the recede timer of the live Peek (#99): the single window folds
+    /// back to Masqué a Peek's duration after the last marking event, unless a
+    /// Reveal or a fresh coalesced event supersedes it first. `hide()` is reached
+    /// only here — never while another event is still arriving — so it never
+    /// races a re-Peek's `expand()` (the leaked-continuation / cross-fade path).
+    private func armPeekRecede() {
         peekTask?.cancel()
-        recedeTask?.cancel()
-        mode = .peek
         peekTask = Task { [weak self, peekDuration] in
-            guard let self, let notch = self.notch else { return }
-            log("peek: \(self.viewModel.peekText)")
-            await notch.expand()
             try? await Task.sleep(for: peekDuration)
-            guard !Task.isCancelled, self.mode == .peek else { return }
+            guard let self, !Task.isCancelled, self.mode == .peek else { return }
             self.mode = .hidden
-            await notch.hide()
-            log("masqué (peek terminé)")
+            self.peekMarking = nil
+            await self.notch?.hide()
+            self.log("masqué (peek terminé)")
         }
     }
 
