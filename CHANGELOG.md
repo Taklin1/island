@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.30
+
+- #125 Mise à jour en un clic réparée : sur macOS, `pkill` exclut ses ancêtres du match — lancé depuis le clic (#92), `install.sh` est un descendant de l'app, donc l'ancienne instance survivait, gardait le port 41414 et la nouvelle mourait en silence (constaté en réel sur l'update 0.1.28→0.1.29). Fix : `pkill -a -f` (+ commentaire du piège sur place, commentaire d'`UpdateInstaller.swift` corrigé) et attente bornée de la libération du port (boucle `lsof` ~5 s) à la place du `sleep 1` aveugle ; chemin d'installation terminal inchangé. FP process-tree jetable (bug reproduit sans `-a`, fix prouvé avec) ; validation clic réel au gate HITL de cette release. (PR #126.)
+
 ## 0.1.29
 
 - #115 UI full english : toutes les chaînes visibles de l'app (cartes `started/working/done/waiting`, Peek `✓ done` / `? waiting for a reply` / `· waiting: "…"`, jauges « 7 d »/« 63% », les 11 items du menu, notification de mise à jour) passées en anglais, lexique d'état unique aligné sur la Priorité d'état, guillemets droits ; ADR-0012 acte la frontière (traces stdout, CONTEXT.md, docs et issues restent FR ; « Liseré » → « Edge outline » per les _Avoid_). (PR #122.)
