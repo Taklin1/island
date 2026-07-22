@@ -254,7 +254,7 @@ struct SessionStoreTests {
         store.apply(AgentEvent(
             sessionID: "abc123", kind: .waitingForUser(message: "May I?"), agent: "claude-code"))
 
-        // A waiting Session is not running a tool: the stale "outil : …" label
+        // A waiting Session is not running a tool: the stale "tool: …" label
         // must not linger above the question/message on the card (#70).
         #expect(store.sessions[0].state == .waiting)
         #expect(store.sessions[0].currentTool == nil)
@@ -707,7 +707,7 @@ struct SessionStoreTests {
 
     // MARK: - Answer from the Island (issue #27, US11)
 
-    @Test("Answering from the Island resumes a waiting Session to 'en cours' optimistically")
+    @Test("Answering from the Island resumes a waiting Session to 'working' optimistically")
     func resumeAfterAnswerFlipsWaitingToRunning() {
         var currentDate = Date(timeIntervalSince1970: 1_000_000)
         let store = SessionStore(now: { currentDate }, sweepInterval: nil)

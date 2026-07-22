@@ -133,7 +133,7 @@ struct TerminalResponderTests {
             optionIndex: 0, forSessionCWD: "/Users/loic/Documents/island")
 
         // Truthful outcome: the caller degrades to focus, the card never
-        // shows « en cours » for a keystroke that did not go out.
+        // shows "working" for a keystroke that did not go out.
         #expect(outcome == .deliveryUnverified)
         #expect(recorder.posted.isEmpty)
     }

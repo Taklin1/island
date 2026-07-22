@@ -294,7 +294,7 @@ public final class SessionStore: ObservableObject {
                 session.state = .waiting
                 session.needsAcknowledgement = true
                 // A waiting Session is not running a tool: clear any currentTool
-                // the preceding PreToolUse set, so a stale "outil : …" label
+                // the preceding PreToolUse set, so a stale "tool: …" label
                 // never lingers above the question/message on the card (#70).
                 // Inside the guard on purpose — a stray notification on an ended
                 // turn must still alter nothing (#31 non-regression).

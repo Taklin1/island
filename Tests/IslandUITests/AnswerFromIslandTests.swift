@@ -26,7 +26,7 @@ struct AnswerFromIslandTests {
         return store
     }
 
-    @Test("Certain target: the option is injected and the Session resumes 'en cours' (US11)")
+    @Test("Certain target: the option is injected and the Session resumes 'working' (US11)")
     func certainTargetInjectsAndResumes() async {
         let store = waitingStore()
         var injectCalls: [(String?, Int)] = []
@@ -152,7 +152,7 @@ struct AnswerFromIslandTests {
         #expect(store.sessions[0].state == .running)
     }
 
-    @Test("US7 invariant: without a click, nothing injects and the Session stays 'attend'")
+    @Test("US7 invariant: without a click, nothing injects and the Session stays 'waiting'")
     func noClickNoAutoDecision() {
         let store = waitingStore()
         var injectCalls = 0

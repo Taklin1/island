@@ -1,6 +1,6 @@
 import Foundation
 
-/// What clicking "⬆ Mettre à jour vers vY.Z…" concluded (issue #92).
+/// What clicking "⬆ Update to vY.Z…" concluded (issue #92).
 public enum UpdateInstallOutcome: Equatable, Sendable {
     /// The install script was handed off (fire-and-forget: it will quit,
     /// replace and relaunch the app — the process launching it does not

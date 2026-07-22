@@ -70,7 +70,7 @@ public struct FrontTerminalObservation {
 }
 
 /// Truthful outcome of an injection attempt (issue #81): the caller only shows
-/// "en cours" on `.injected`, which is returned **iff** the keystroke was
+/// "working" on `.injected`, which is returned **iff** the keystroke was
 /// actually posted to a verified target — never optimistically.
 public enum InjectionOutcome: Equatable, Sendable {
     /// The keystroke was posted to the verified target's pid.
