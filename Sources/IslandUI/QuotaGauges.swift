@@ -17,6 +17,20 @@ struct QuotaGauge: Identifiable, Equatable {
     /// Local reset time ("↺ 17:00"), when known (5 h window).
     let resetLabel: String?
 
+    /// Threshold colour of the gauge fill: green < 40 %, yellow < 75 %, red
+    /// otherwise. Exposed on the model so the bar is drawn with an explicit
+    /// `Color` (a filled shape) rather than a system-control `tint` — the
+    /// Extended panel is a non-activating `NSPanel` that never becomes key, so
+    /// its material vibrancy would desaturate a control tint until the panel is
+    /// clicked (issue #116). An explicit `Color` on a shape is immune to that.
+    var thresholdColor: Color {
+        switch fraction {
+        case ..<0.4: .green
+        case ..<0.75: .yellow
+        default: .red
+        }
+    }
+
     /// One gauge per reported window, 5 h first.
     static func gauges(for quotas: Quotas) -> [QuotaGauge] {
         var gauges: [QuotaGauge] = []
@@ -62,9 +76,7 @@ struct QuotaGaugesView: View {
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .frame(width: 26, alignment: .leading)
-                    ProgressView(value: gauge.fraction)
-                        .progressViewStyle(.linear)
-                        .tint(Self.tint(for: gauge.fraction))
+                    QuotaGaugeBar(fraction: gauge.fraction, color: gauge.thresholdColor)
                     Text(gauge.percentLabel)
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -82,12 +94,27 @@ struct QuotaGaugesView: View {
             Divider().background(.white.opacity(0.15))
         }
     }
+}
 
-    static func tint(for fraction: Double) -> Color {
-        switch fraction {
-        case ..<0.4: .green
-        case ..<0.75: .yellow
-        default: .red
+/// A gauge bar drawn from explicit shapes: a translucent white track with a
+/// `color`-filled capsule clamped to `fraction`. Unlike a `ProgressView`'s
+/// `tint`, an explicit `Color` on a filled shape keeps its saturation on the
+/// non-activating Extended panel, so threshold colours show immediately
+/// without a click (issue #116).
+private struct QuotaGaugeBar: View {
+    let fraction: Double
+    let color: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(.white.opacity(0.15))
+                Capsule()
+                    .fill(color)
+                    .frame(width: max(0, proxy.size.width * fraction))
+            }
         }
+        .frame(height: 4)
     }
 }
