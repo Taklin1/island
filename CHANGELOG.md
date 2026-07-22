@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.27
+
+- #90 CI de release : premier workflow du repo (`.github/workflows/release.yml`), déclenché au tag `vX.Y.Z` sur `main` (ou `workflow_dispatch` = dry-run en draft jetable) ; garde fail-fast tag == tête de `CHANGELOG.md` avant build, toolchain Swift 6 épinglé, import du certificat stable `island-release` (secrets `ISLAND_CERT_P12`/`ISLAND_CERT_P12_PASSWORD`, spike #87) dans un keychain jetable + trust code-signing, build/signature via `package_app.sh --release` (identité paramétrée `ISLAND_CODESIGN_IDENTITY`, ad-hoc local inchangé), assertions `Authority=island-release` + version nue, asset `island.zip` (`ditto --keepParent`, contrat `install.sh` #89) attaché à la GitHub Release. (Épic #85, PR #102.)
+
 ## 0.1.26
 
 - #91 Détection de mise à jour : verdict pur (`UpdateCheckGate`, comparaison sémantique) sur l'API GitHub Releases via seam `UpdateFetcher` (fixtures réelles capturées), item de menu muté en place (« island vX.Y.Z — à jour » ↔ « ⬆ Mettre à jour vers vY.Z… ») + « Vérifier les mises à jour… », UNE notification macOS par version (persistée) ; un build `-dev` ne propose jamais rien, hors-ligne silencieux, surfaces Sessions intactes ; clic no-op tracé (branché en #92). (Épic #85, PR #97.)
