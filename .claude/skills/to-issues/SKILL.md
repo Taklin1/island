@@ -26,8 +26,8 @@ Break the plan into **tracer bullet** issues. Each issue is a thin vertical slic
 Slices may be 'HITL' or 'AFK'. HITL slices require human interaction, such as an architectural decision or a design review. AFK slices can be implemented and merged without human interaction. Prefer AFK over HITL where possible.
 
 <vertical-slice-rules>
-- Each slice delivers a narrow but COMPLETE path through every layer (schema, API, UI, tests)
-- A completed slice is demoable or verifiable on its own
+- Each slice delivers a narrow but COMPLETE path through every layer (event ingestion, Session state, SwiftUI pill, tests)
+- A completed slice is demoable or verifiable on its own (via the local event API, `swift test`, and a screenshot for anything visual)
 - Prefer many thin slices over few thick ones
 </vertical-slice-rules>
 
@@ -70,7 +70,7 @@ Avoid specific file paths or code snippets HERE. They go stale fast, and this se
 
 Required on every AFK slice. This is what makes the issue self-carrying for an agent holding none of this conversation's context, and it is what an epic orchestrator gates on before it launches anything.
 
-- **Root cause**, anchored on a SYMBOL (function name, literal string, SQL clause) with `file:line` as a hint, plus the commit SHA you read it at. Line numbers drift, symbols do not. Never cite a line you have not just verified against the file: check them mechanically before publishing.
+- **Root cause**, anchored on a SYMBOL (function name, literal string, type or case name) with `file:line` as a hint, plus the commit SHA you read it at. Line numbers drift, symbols do not. Never cite a line you have not just verified against the file: check them mechanically before publishing.
 - **Evidence** that proves the root cause: the query, the log line, the measurement, with its actual numbers.
 - **Traps**: what a naive implementation would silently break. Write it here, or an agent finds it at merge time.
 - **Files to touch**, including any twin that a parity test keeps byte-identical.
@@ -100,8 +100,8 @@ Publishing loose issues is not enough. An orchestrator discovers sub-issues thro
 - **Link every AFK slice as a native sub-issue** of the parent. Keep HITL slices out of that link: they do not carry the AFK label and would fail an orchestrator's readiness gate.
 - **Label the parent as an epic** once it has two or more slices, and remove any AFK-readiness label from it. The parent is a container, not a task an agent can pick up.
 - **Append an execution order to the parent whenever any slice has a blocker.** You built the dependency graph in step 4; do not throw it away. Group the slices into waves, and give the one-line reason each dependency exists. An orchestrator that cannot see the reason will "optimise" the ordering away and launch agents onto code that does not exist yet.
-- **Add every published issue to the project board**, if the repo tracks one.
+- **Project board**: island has no GitHub Project board yet. Skip this step. If one is added later, document its identifiers in the per-repo agent docs and add issues to it.
 
-The repo's tracker, label vocabulary, board identifiers, and the exact commands (including how to create a native sub-issue link, which the `gh` CLI may not expose as a flag) live in the per-repo agent docs. Read them; do not duplicate them here, and do not invent them.
+The repo's tracker, label vocabulary, and the exact commands (including how to create a native sub-issue link, which the `gh` CLI does not expose as a flag — use the GraphQL `addSubIssue` mutation) live in the per-repo agent docs (`docs/agents/`). Read them; do not duplicate them here, and do not invent them.
 
 Never close the parent, and never rewrite the body it already had. Appending an execution-order section, linking sub-issues, and adjusting the parent's labels are expected and allowed.

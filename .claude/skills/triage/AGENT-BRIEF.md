@@ -18,8 +18,8 @@ The issue may sit in `ready-for-agent` for days or weeks. The codebase will chan
 
 Describe **what** the system should do, not **how** to implement it. The agent will explore the codebase fresh and make its own implementation decisions.
 
-- **Good:** "The `SkillConfig` type should accept an optional `schedule` field of type `CronExpression`"
-- **Bad:** "Open src/types/skill.ts and add a schedule field on line 42"
+- **Good:** "The `SessionState` type should carry an optional `quota` field describing remaining tokens"
+- **Bad:** "Open Sources/Island/SessionState.swift and add a quota field on line 42"
 - **Good:** "When a user runs `/triage` with no arguments, they should see a summary of issues needing attention"
 - **Bad:** "Add a switch statement in the main handler function"
 
@@ -73,33 +73,33 @@ Be specific about edge cases and error conditions.
 ## Agent Brief
 
 **Category:** bug
-**Summary:** Skill description truncation drops mid-word, producing broken output
+**Summary:** Session summary truncation drops mid-word in the island pill
 
 **Current behavior:**
-When a skill description exceeds 1024 characters, it is truncated at exactly
-1024 characters regardless of word boundaries. This produces descriptions
-that end mid-word (e.g. "Use when the user wants to confi").
+When a Session summary exceeds the pill's width budget, it is truncated at
+exactly the character limit regardless of word boundaries. This produces
+labels that end mid-word (e.g. "Refactoring the sess").
 
 **Desired behavior:**
-Truncation should break at the last word boundary before 1024 characters
-and append "..." to indicate truncation.
+Truncation should break at the last word boundary before the limit and
+append an ellipsis to indicate truncation.
 
 **Key interfaces:**
-- The `SkillMetadata` type's `description` field — no type change needed,
-  but the validation/processing logic that populates it needs to respect
-  word boundaries
-- Any function that reads SKILL.md frontmatter and extracts the description
+- The `SessionState` type's `summary` field — no type change needed, but the
+  view-model logic that formats it for the pill needs to respect word
+  boundaries
+- Any function that derives the pill label from a Session summary
 
 **Acceptance criteria:**
-- [ ] Descriptions under 1024 chars are unchanged
-- [ ] Descriptions over 1024 chars are truncated at the last word boundary
-      before 1024 chars
-- [ ] Truncated descriptions end with "..."
-- [ ] The total length including "..." does not exceed 1024 chars
+- [ ] Summaries under the limit are unchanged
+- [ ] Summaries over the limit are truncated at the last word boundary before
+      the limit
+- [ ] Truncated summaries end with an ellipsis
+- [ ] The total length including the ellipsis does not exceed the limit
 
 **Out of scope:**
-- Changing the 1024 char limit itself
-- Multi-line description support
+- Changing the width budget itself
+- Multi-line summary support
 ```
 
 ### Good agent brief (enhancement)
@@ -155,8 +155,8 @@ The triage thing is broken. Look at the main file and fix it.
 The function around line 150 has the issue.
 
 **Files to change:**
-- src/triage/handler.ts (line 150)
-- src/types.ts (line 42)
+- Sources/Island/SessionStore.swift (line 150)
+- Sources/Island/SessionState.swift (line 42)
 ```
 
 This is bad because:

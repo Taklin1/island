@@ -10,8 +10,11 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
+- **Native sub-issue link**: the `gh` CLI has no flag for it — use the GraphQL API (`addSubIssue` mutation) with the parent and child issue node IDs.
 
 Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
+
+If a GitHub Project board is ever configured, document its identifiers and workflows here.
 
 ## When a skill says "publish to the issue tracker"
 

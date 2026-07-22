@@ -1,10 +1,10 @@
 ---
 name: prompt
 description: >-
-  Génère un prompt de lancement prêt-à-coller pour implémenter une issue GitHub Akutia
+  Génère un prompt de lancement prêt-à-coller pour implémenter une issue GitHub island
   dans une session dédiée : structure figée du projet (Tâche + PRÉREQUIS + skills
   /git-flow /tdd /agentic-tests + « Avant TOUT code, lis » ciblé + Séquence
-  audit-avant→plan→TDD→audit-après→FP→PR + Périmètre + vouvoiement/accents/zéro em-dash).
+  audit-avant→plan→TDD→audit-après→FP→PR + Périmètre + français docs / anglais code).
   Pour un LOT d'issues, ajoute une carte de parallélisation (quoi lancer en parallèle, quoi
   séquencer) d'après les blocked-by et les fichiers partagés. Déclenche dès que l'utilisateur
   veut « le prompt » ou « les prompts » d'une ou plusieurs issues, préparer des sessions
@@ -17,10 +17,10 @@ description: >-
   branche/dépendance sans vouloir de prompt.
 ---
 
-# /prompt - générateur de prompts de lancement d'issues (Akutia)
+# /prompt - générateur de prompts de lancement d'issues (island)
 
 Ce skill transforme une (ou plusieurs) issue(s) GitHub en **prompt(s) de lancement prêt(s)
-à coller** dans des sessions dédiées. Chaque prompt reprend le standard de travail Akutia
+à coller** dans des sessions dédiées. Chaque prompt reprend le standard de travail island
 (audit avant/après, TDD, FP, PR vers develop) et pointe l'agent vers **le bon contexte à
 lire** avant de coder - pour qu'une session neuve démarre exactement comme une session
 experte, sans redécouvrir l'architecture.
@@ -30,17 +30,17 @@ parallélisation** : ce qui peut être lancé en parallèle tout de suite, ce qu
 
 ## Quand ce skill se déclenche
 
-- « donne-moi le prompt pour #289 », « par quoi je lance cette issue ? »
-- « prépare les prompts des issues #271 #289 #290 »
+- « donne-moi le prompt pour #12 », « par quoi je lance cette issue ? »
+- « prépare les prompts des issues #12 #14 #15 »
 - juste après `/to-issues` : « fais-moi les prompts des issues qu'on vient de créer »
 - « quelles issues je peux paralléliser ? »
 - toute demande de préparer des sessions dédiées / AFK à partir d'issues existantes.
 
 ## Entrées acceptées
 
-- un ou plusieurs **numéros** d'issue (`#289`, `289`) ou **URLs** GitHub ;
+- un ou plusieurs **numéros** d'issue (`#12`, `12`) ou **URLs** GitHub ;
 - « les issues que /to-issues vient de créer » → prends les numéros retournés dans le contexte ;
-- un **epic** (`#219`) → génère un prompt pour chacune de ses sous-issues OUVERTES
+- un **epic** (`#1`) → génère un prompt pour chacune de ses sous-issues OUVERTES
   (`gh issue view <epic> --json` / la liste de sous-issues), plus la carte de parallélisation.
 
 Si aucune référence n'est fournissable, demande laquelle avant de générer.
@@ -50,7 +50,7 @@ Si aucune référence n'est fournissable, demande laquelle avant de générer.
 ## Étape 1 - récupérer chaque issue
 
 ```bash
-gh issue view <N> --repo Taklin1/briefy
+gh issue view <N> --repo Taklin1/island
 ```
 
 Lis : **titre exact**, corps (What to build / Contexte / Notes), **Acceptance criteria**,
@@ -63,7 +63,7 @@ Le gabarit est **figé** (c'est sa valeur : chaque session démarre pareil). Tu 
 le contenu des `{...}`. Le voici, avec la logique de remplissage juste après.
 
 ```
-Nouvelle session, projet Akutia. Tâche : implémenter l'issue GitHub #{N} (Taklin1/briefy) - « {titre exact} ».
+Nouvelle session, projet island. Tâche : implémenter l'issue GitHub #{N} (Taklin1/island) - « {titre exact} ».
 
 {CADRAGE - bloc optionnel de 2-4 lignes ; À INCLURE seulement si l'issue n'est PAS une tranche de code standard (voir plus bas). Sinon, supprimer complètement cette ligne.}
 
@@ -71,11 +71,11 @@ PRÉREQUIS : {dépendances} (vérifie avant de brancher, sinon STOPPE et prévie
 
 Skills à utiliser à minima : /git-flow (positionnement branche), /tdd (implémentation test-first rouge-vert-refactor), /agentic-tests (FP de la sous-issue avant PR).
 
-Avant TOUT code, lis : (1) l'issue #{N} en entier, (2) {ADR(s) de la zone}, (3) {fichiers/endpoints concernés}, (4) {invariants .claude/rules/*.md de la zone}, (5) {mémoires pertinentes [[...]] + slices sœurs}.
+Avant TOUT code, lis : (1) l'issue #{N} en entier, (2) {CONTEXT.md + ADR(s) de la zone}, (3) {fichiers Swift / API d'événements concernés}, (4) {invariants/règles de la zone, s'ils existent}, (5) {sessions sœurs de l'epic - autres slices déjà livrées}.
 
-Séquence : /git-flow (branche depuis {base}) → carte « In progress » → AUDIT PRÉALABLE (impact + cascade) → plan montré → /tdd pour l'implémentation → AUDIT APRÈS impitoyable et factuel → /agentic-tests (FP #{N}) → `npx prettier --write` sur le diff → commit/push + PR vers {base} (« In review »). Arrête-toi à la PR.
+Séquence : /git-flow (branche depuis {base}) → AUDIT PRÉALABLE (impact + cascade) → plan montré → /tdd pour l'implémentation → AUDIT APRÈS impitoyable et factuel → /agentic-tests (FP #{N}) → `swift build` + `swift test` verts sur le diff → commit/push + PR vers {base}. Arrête-toi à la PR.
 
-Périmètre : {scope précis}. {Derrière le flag {FLAG} : off = byte-identique, si applicable.} Vouvoiement + accents complets, zéro em-dash.
+Périmètre : {scope précis}. Français pour les docs/issues, anglais pour le code et les identifiants.
 ```
 
 ### Comment remplir chaque `{...}`
@@ -84,11 +84,11 @@ Périmètre : {scope précis}. {Derrière le flag {FLAG} : off = byte-identique,
 
 **`{CADRAGE}` (optionnel)** - c'est le curseur d'honnêteté du prompt. L'inclure UNIQUEMENT
 quand l'issue sort du cas « tranche de code testable » :
-- **issue ops / outillage** (script, migration, runbook) : préciser que `/tdd` + `/agentic-tests`
-  s'appliquent au **code produit** (logique pure + FP), pas à la mutation prod, qui reste un
-  geste manuel (relais VPS, jamais `:5434`). Ex. #290.
-- **UI pure réutilisant un endpoint déjà testé** : préciser que le FP est surtout du wiring +
-  la réutilisation de la suite existante, pas un stand-up d'app complet.
+- **issue ops / outillage** (script, fixtures, runbook) : préciser que `/tdd` + `/agentic-tests`
+  s'appliquent au **code produit** (logique pure + FP), pas au geste manuel qui reste à la main
+  de Loic (ex. capture de transcripts hooks réels depuis `~/.claude`, release d'un binaire) ;
+- **UI SwiftUI pure réutilisant un état déjà testé** : préciser que le FP est surtout du wiring
+  + la vérification visuelle par screenshot (pas de XCUITest), pas un stand-up complet ;
 - **décision HITL / design ouvert** : signaler la décision à faire trancher dans le plan.
 Sinon → **pas de bloc CADRAGE** (une tranche AFK standard n'en a pas besoin).
 
@@ -100,40 +100,42 @@ Sinon → **pas de bloc CADRAGE** (une tranche AFK standard n'en a pas besoin).
 - aucun bloqueur → « aucun bloquant (autonome) ».
 
 **`{base}` (branche de départ + cible PR)** - `develop` par défaut. Si l'issue est une
-sous-issue d'un **epic grillé qui a une branche `epic/<n>-<slug>`**, alors `epic/<...>`
-(cf `/git-flow`). Les slices de la base de connaissances (#220-#225) partaient de `develop` :
-vérifie l'historique de l'epic (d'où sont parties les sœurs) plutôt que de supposer.
+sous-issue d'un **epic qui a une branche `epic/<n>-<slug>`**, alors `epic/<...>` (cf
+`/git-flow`) : les sous-issues d'un epic s'auto-mergent dans la branche epic après vérif
+locale verte, et c'est l'epic qui part en PR vers develop. Vérifie l'historique de l'epic
+(d'où sont parties les sœurs) plutôt que de supposer.
 
 **`Avant TOUT code, lis` - LE cœur du skill.** Un bon prompt fait lire à la session neuve
 exactement ce qu'un expert de la zone a en tête. Sélectionne, dans l'ordre :
 1. **l'issue elle-même** (toujours (1)) ;
-2. **l'ADR / la PRD de la zone** : `docs/adr/*.md` (mappe le domaine de l'issue → l'ADR ;
-   ex. quota→0001, KB→0004, templates→0003, résilience→0002) ; + `PRD_*.md` si l'issue en relève ;
-3. **le code concerné** : les fichiers/endpoints nommés dans le corps de l'issue, plus un
-   `grep`/Explore rapide de la zone pour les voisins load-bearing (route + glue + dérivation
-   pure + UI, selon la pile) ;
-4. **les invariants `.claude/rules/*.md` de la zone** : utilise la **table d'index de
-   `CLAUDE.md`** (section « Index des fichiers `.claude/rules/` ») qui mappe zone→fichier ;
-   nomme ceux dont le `paths:` couvre les fichiers touchés (ex. UI streams→`frontend-streams.md`,
-   route/auth→`security-auth.md`, DB→`database.md`, bridge→`bridge-analysis.md`) ;
-5. **les mémoires `memory/*.md`** : via l'index `MEMORY.md` + les `[[liens]]` ; inclure la
-   mémoire de la slice courante si elle existe et **les mémoires des slices sœurs** de l'epic
-   (une session sur #225 gagne à lire #220/#223/#224). Cite-les en `[[slug]]`.
+2. **le contexte de domaine** : `CONTEXT.md` (vocabulaire du projet) + l'ADR de la zone dans
+   `docs/adr/*.md` quand elle existe (mappe le domaine de l'issue → l'ADR) ; + la PRD si
+   l'issue en relève ;
+3. **le code concerné** : les fichiers Swift / points de l'API locale d'événements nommés dans
+   le corps de l'issue, plus un `grep`/Explore rapide de la zone pour les voisins load-bearing
+   (ingestion des hooks + dérivation de l'état Session + vue SwiftUI, selon la couche) ;
+4. **les invariants/règles de la zone** : un index `.claude/rules/` n'est pas encore configuré
+   sur island - à documenter quand il existera ; en attendant, pointe le fichier de règle
+   pertinent seulement s'il existe, sinon saute ce point ;
+5. **les sessions sœurs de l'epic** : les autres slices déjà livrées de la même epic (une
+   session sur une slice gagne à lire ce que ses sœurs ont posé). Un mécanisme de mémoire
+   (`memory/*.md`) n'est pas encore configuré sur island - à documenter quand il existera ; en
+   attendant, cite les PR/branches sœurs plutôt que des `[[liens]]`.
 Ne liste pas 15 fichiers : vise **4-6 pointeurs vraiment portants**. Si tu ne trouves pas
-l'ADR/rule/mémoire pertinents, **grep pour les trouver** - ne remplis pas au hasard.
+l'ADR/règle/slice pertinents, **grep pour les trouver** - ne remplis pas au hasard.
 
 **`{scope précis}` (Périmètre)** - distille *What to build* + *Acceptance criteria* +
-décisions clés en **un paragraphe dense** : le comportement bout-en-bout, les gardes de
-sécurité, les cas limites, les décisions déjà tranchées (pour ne pas les rouvrir). Reprends
-le vocabulaire du domaine (CONTEXT.md / l'ADR). Ajoute, quand ça s'applique :
-- le **feature flag** + « off = byte-identique » (quasi toutes les features Akutia sont
-  gatées ; c'est un invariant projet) ;
-- les **non-négociables de copie** : « Vouvoiement + accents complets, zéro em-dash »
-  (voir `.claude/rules` + mémoires `ui-copy-vouvoiement-accents`, `em-dash-detection-locale`).
+décisions clés en **un paragraphe dense** : le comportement bout-en-bout, les gardes, les cas
+limites, les décisions déjà tranchées (pour ne pas les rouvrir). Reprends le vocabulaire du
+domaine (`CONTEXT.md` / l'ADR). Ajoute, quand ça s'applique :
+- **si l'issue introduit un flag/réglage** : son comportement par défaut explicite ;
+- le **non-négociable de langue** : « Français pour les docs/issues, anglais pour le code et
+  les identifiants » (invariant projet).
 
-La **Séquence est identique pour toute issue** (c'est le standard de travail Akutia :
-audit préalable → plan → TDD → audit après impitoyable et factuel → FP → PR, arrêt à la PR).
-Ne la personnalise pas ; elle encode la discipline non-négociable du repo.
+La **Séquence est identique pour toute issue** (c'est le standard de travail island :
+audit préalable → plan → TDD → audit après impitoyable et factuel → FP → `swift build` +
+`swift test` verts → PR, arrêt à la PR). Ne la personnalise pas ; elle encode la discipline
+non-négociable du repo.
 
 ## Étape 3 - format de sortie
 
@@ -162,10 +164,10 @@ dit **quoi lancer en parallèle** et **quoi séquencer**. Deux signaux :
    du bloqueur sur develop).
 
 2. **Fichiers partagés** (mou, mais réel) - deux issues sans dépendance formelle mais qui
-   **éditent le même module** (même route, même composant, même glue) vont **entrer en
+   **éditent le même module** (même store, même vue, même glue d'ingestion) vont **entrer en
    conflit au merge** même en parallèle. Déduis les fichiers touchés du corps des issues (+
    un `grep` de la zone si besoin) et **signale-les** : « #A et #B touchent toutes deux
-   `X.tsx` → préférer les sérialiser (ou coordonner les diffs) ».
+   `SessionStore.swift` → préférer les sérialiser (ou coordonner les diffs) ».
 
 Format de la carte :
 
@@ -173,7 +175,7 @@ Format de la carte :
 ## Parallélisation
 - Vague 1 (en //): #A, #B  - indépendantes.
 - Vague 2 (après merge #A): #C  - bloquée par #A.
-- Attention conflit: #B et #C touchent `src/lib/team/knowledgeBase.ts` → sérialiser de préférence.
+- Attention conflit: #B et #C touchent `Sources/island/SessionStore.swift` → sérialiser de préférence.
 ```
 
 Reste **factuel** : base les vagues sur les `Blocked by` réels, pas sur une intuition. Si une

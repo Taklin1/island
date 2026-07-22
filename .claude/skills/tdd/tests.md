@@ -4,35 +4,36 @@
 
 **Integration-style**: Test through real interfaces, not mocks of internal parts.
 
-```typescript
+```swift
 // GOOD: Tests observable behavior
-test("user can checkout with valid cart", async () => {
-  const cart = createCart();
-  cart.add(product);
-  const result = await checkout(cart, paymentMethod);
-  expect(result.status).toBe("confirmed");
-});
+@Test func agentFinishedEventMarksSessionIdle() throws {
+    let store = SessionStore()
+    store.ingest(hookFixture(.stop, session: "s1"))
+    #expect(store.session("s1")?.status == .idle)
+}
 ```
 
 Characteristics:
 
 - Tests behavior users/callers care about
-- Uses public API only
+- Uses the public API only
 - Survives internal refactors
 - Describes WHAT, not HOW
 - One logical assertion per test
+
+For island, the strongest tests drive the app the way its hooks do: feed a JSON hook fixture through the local event API, then assert on the published Session state.
 
 ## Bad Tests
 
 **Implementation-detail tests**: Coupled to internal structure.
 
-```typescript
+```swift
 // BAD: Tests implementation details
-test("checkout calls paymentService.process", async () => {
-  const mockPayment = jest.mock(paymentService);
-  await checkout(cart, payment);
-  expect(mockPayment.process).toHaveBeenCalledWith(cart.total);
-});
+@Test func ingestCallsReducerThenNotifier() throws {
+    let spy = ReducerSpy()
+    store.ingest(event)
+    #expect(spy.reduceCallCount == 1)
+}
 ```
 
 Red flags:
@@ -42,20 +43,18 @@ Red flags:
 - Asserting on call counts/order
 - Test breaks when refactoring without behavior change
 - Test name describes HOW not WHAT
-- Verifying through external means instead of interface
+- Verifying through external means instead of the interface
 
-```typescript
-// BAD: Bypasses interface to verify
-test("createUser saves to database", async () => {
-  await createUser({ name: "Alice" });
-  const row = await db.query("SELECT * FROM users WHERE name = ?", ["Alice"]);
-  expect(row).toBeDefined();
-});
+```swift
+// BAD: Bypasses the interface to verify internal state
+@Test func ingestSetsPrivateDictionary() throws {
+    store.ingest(hookFixture(.start, session: "s1"))
+    #expect(store.rawSessionsDict["s1"] != nil)  // reaches past the interface
+}
 
-// GOOD: Verifies through interface
-test("createUser makes user retrievable", async () => {
-  const user = await createUser({ name: "Alice" });
-  const retrieved = await getUser(user.id);
-  expect(retrieved.name).toBe("Alice");
-});
+// GOOD: Verifies through the interface
+@Test func ingestedSessionBecomesQueryable() throws {
+    store.ingest(hookFixture(.start, session: "s1"))
+    #expect(store.session("s1") != nil)
+}
 ```
