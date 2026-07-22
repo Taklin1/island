@@ -59,11 +59,32 @@ echo "==> island ${VERSION} downloaded"
 
 # --- Quit any running instance -----------------------------------------------
 # island binds the fixed local port 41414: only one instance may run. Kill by
-# install path (the repo's canonical pattern), then give the port a moment to
-# be released. pkill exits 1 when nothing matched — that is fine (idempotence).
+# install path (the repo's canonical pattern).
+#
+# `-a` is load-bearing (issue #125): by default pkill excludes its own process
+# AND all of its ancestors from the match (man pgrep, flag -a). In the update
+# path (#92) this script is a DESCENDANT of the running app — island →
+# UpdateInstaller Process → bash → install.sh → pkill — so island is an ancestor
+# of pkill and, without `-a`, is silently skipped: the old instance survives,
+# keeps port 41414, and the freshly `open`ed instance dies binding it. `-a`
+# includes ancestors so the running app is actually signalled. In the terminal
+# install path the app is not an ancestor, so `-a` is a no-op there — same
+# behaviour, bug fixed only where it existed.
+#
+# pkill exits 1 when nothing matched — that is fine (idempotence).
 echo "==> stopping running instance (if any)"
-pkill -f "Applications/${APP_NAME}.app" 2>/dev/null || true
-sleep 1
+pkill -a -f "Applications/${APP_NAME}.app" 2>/dev/null || true
+
+# Wait (bounded) for the port to be released instead of a blind `sleep 1`: the
+# signalled app needs a moment to exit and close its listening socket before the
+# fresh instance can bind it. Poll up to ~5s, then proceed regardless. Idempotent:
+# if nothing is listening (fresh install, or app already gone) lsof returns
+# non-zero immediately and the loop exits at once — never slower than the old
+# sleep when there is nothing to wait for.
+for _ in $(seq 1 25); do
+    lsof -nP -iTCP:41414 -sTCP:LISTEN >/dev/null 2>&1 || break
+    sleep 0.2
+done
 
 # --- Replace the installed app -----------------------------------------------
 # Remove the old bundle entirely, then lay down the new one — never extract

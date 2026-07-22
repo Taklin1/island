@@ -72,10 +72,12 @@ extension UpdateInstaller {
 /// `curl | bash` would execute a truncated script on a dropped connection).
 /// install.sh itself then validates the downloaded bundle BEFORE `pkill`-ing
 /// the app (a network failure leaves the running app untouched), replaces
-/// `~/Applications/island.app` and relaunches via `open`. The bash child
-/// survives the pkill — its command line does not match the
-/// "Applications/island.app" pattern the script kills by — and is reparented
-/// when the app exits.
+/// `~/Applications/island.app` and relaunches via `open`. Because this shell is
+/// a DESCENDANT of the app (island → this Process → bash → install.sh → pkill),
+/// island is an ancestor of the pkill — which macOS excludes from the match by
+/// default. install.sh therefore uses `pkill -a` to include ancestors and
+/// actually signal the running app (issue #125); without `-a` the old instance
+/// survived, held port 41414, and the freshly relaunched instance died on it.
 private func liveRunInstallScript() {
     let log = NSString(string: UpdateInstaller.installLogPath).expandingTildeInPath
     let script = """
