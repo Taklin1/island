@@ -95,8 +95,11 @@ public final class IslandController {
     private let peekDuration: Duration
     /// Grace delay before a hover-off recedes the Étendu to Masqué: bridges the
     /// brief gap between the top-edge gesture and the pointer landing on the
-    /// panel, so the Island does not flicker shut mid-reveal.
-    private let recedeGrace: Duration = .milliseconds(300)
+    /// panel, so the Island does not flicker shut mid-reveal. Injectable (twin of
+    /// ``peekDuration``) so the recede tests can drive the fold deterministically
+    /// without racing a fixed sleep against a real 300 ms grace (#109); stays
+    /// 300 ms in production (anti-flicker unchanged, ADR-0007).
+    private let recedeGrace: Duration
     /// Width of the centred top-edge band that triggers a Reveal (~webcam),
     /// used by the pure ``shouldReveal(at:in:sessionCount:)`` (issue #53).
     public static let revealBandWidth: CGFloat = 280
@@ -121,7 +124,8 @@ public final class IslandController {
         focusTerminal: ((_ terminal: String?, _ cwd: String?) -> Void)? = nil,
         refreshTitles: (() -> Void)? = nil,
         injectAnswer: ((_ cwd: String?, _ optionIndex: Int) async -> Bool)? = nil,
-        peekDuration: Duration = .seconds(2.5)
+        peekDuration: Duration = .seconds(2.5),
+        recedeGrace: Duration = .milliseconds(300)
     ) {
         self.store = store
         self.quotaStore = quotaStore
@@ -129,6 +133,7 @@ public final class IslandController {
         self.refreshTitles = refreshTitles
         self.injectAnswer = injectAnswer
         self.peekDuration = peekDuration
+        self.recedeGrace = recedeGrace
         viewModel.activateSession = { [weak self] sessionID in
             self?.cardActivated(sessionID: sessionID)
         }
@@ -401,6 +406,14 @@ public final class IslandController {
     /// Test seam (issue #60): whether the Étendu is currently deployed, so the
     /// recede tests can assert the fold without reaching into the private `mode`.
     var isExtendedDeployed: Bool { mode == .expanded }
+
+    /// Test seam (issue #109): awaits the in-flight anti-flicker recede task to
+    /// its real completion, so the recede tests assert the fold on the task's
+    /// actual settle instead of racing a fixed sleep against the grace. No-op
+    /// (returns immediately) when no recede is pending — the recede task is `nil`.
+    func settleRecede() async {
+        await recedeTask?.value
+    }
 
     /// Test seam (#99): whether a Peek is currently surfaced, so the coalescence
     /// tests can assert the single continuous surface without reaching `mode`.

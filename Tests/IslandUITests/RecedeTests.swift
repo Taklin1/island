@@ -64,14 +64,16 @@ struct RecedeTests {
             sessionID: "s", kind: .waitingForUser(message: nil),
             terminal: "ghostty", agent: "claude-code"
         ))
-        let controller = IslandController(store: store)
+        // Zero grace + awaiting the real recede task (#109): no clock margin to
+        // race, so the fold is deterministic even under the full parallel suite.
+        let controller = IslandController(store: store, recedeGrace: .zero)
 
         controller.reveal()
         #expect(controller.isExtendedDeployed)
 
         // The monitor saw the cursor leave the band while the panel is not hovered.
         controller.recedeIfClearOfPanel()
-        try? await Task.sleep(for: .milliseconds(450)) // past the 300 ms grace
+        await controller.settleRecede() // awaits the real fold, no sleep margin
 
         #expect(!controller.isExtendedDeployed)
     }
@@ -81,7 +83,7 @@ struct RecedeTests {
         let controller = IslandController(store: SessionStore())
 
         controller.recedeIfClearOfPanel()
-        try? await Task.sleep(for: .milliseconds(50))
+        await controller.settleRecede() // no recede armed → returns immediately
 
         #expect(!controller.isExtendedDeployed)
     }
