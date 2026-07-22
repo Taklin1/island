@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import IslandUI
 import IslandStore
@@ -15,11 +16,11 @@ struct QuotaPresentationTests {
         let with = SessionCard(session: session, contextUsedPercentage: 17.3, home: "/Users/loic")
         let without = SessionCard(session: session, home: "/Users/loic")
 
-        #expect(with.contextLabel == "contexte 17 %")
+        #expect(with.contextLabel == "context 17%")
         #expect(without.contextLabel == nil)
     }
 
-    @Test("The global gauges carry French window labels, percents, fractions and a local reset time")
+    @Test("The global gauges carry window labels, percents, fractions and a local reset time")
     func gaugesCarryLabelsAndFractions() throws {
         let quotas = Quotas(
             fiveHour: RateLimitWindow(
@@ -34,7 +35,7 @@ struct QuotaPresentationTests {
         #expect(gauges.count == 2)
         let fiveHour = try #require(gauges.first)
         #expect(fiveHour.windowLabel == "5 h")
-        #expect(fiveHour.percentLabel == "24 %")
+        #expect(fiveHour.percentLabel == "24%")
         #expect(fiveHour.fraction == 0.235)
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
@@ -44,8 +45,8 @@ struct QuotaPresentationTests {
         #expect(reset == String(format: "↺ %02d:%02d", expected.hour!, expected.minute!))
 
         let sevenDay = try #require(gauges.last)
-        #expect(sevenDay.windowLabel == "7 j")
-        #expect(sevenDay.percentLabel == "41 %")
+        #expect(sevenDay.windowLabel == "7 d")
+        #expect(sevenDay.percentLabel == "41%")
         #expect(sevenDay.resetLabel == nil)
     }
 
@@ -60,6 +61,22 @@ struct QuotaPresentationTests {
         #expect(over[1].fraction == 0)
     }
 
+    @Test("A gauge exposes its threshold colour on the model (green < 40 %, yellow < 75 %, red otherwise)")
+    func gaugeExposesThresholdColour() {
+        func color(forPercentage percentage: Double) -> Color {
+            QuotaGauge.gauges(for: Quotas(
+                fiveHour: RateLimitWindow(usedPercentage: percentage)
+            ))[0].thresholdColor
+        }
+
+        #expect(color(forPercentage: 0) == .green)
+        #expect(color(forPercentage: 39) == .green)
+        #expect(color(forPercentage: 40) == .yellow)
+        #expect(color(forPercentage: 74) == .yellow)
+        #expect(color(forPercentage: 75) == .red)
+        #expect(color(forPercentage: 100) == .red)
+    }
+
     @Test("A window absent from the Quotas yields no gauge")
     func absentWindowYieldsNoGauge() {
         let onlyWeek = QuotaGauge.gauges(for: Quotas(
@@ -67,7 +84,7 @@ struct QuotaPresentationTests {
         ))
 
         #expect(onlyWeek.count == 1)
-        #expect(onlyWeek[0].windowLabel == "7 j")
+        #expect(onlyWeek[0].windowLabel == "7 d")
     }
 
     @Test("The stdout quotas trace carries both windows and the reset epoch")

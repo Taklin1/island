@@ -3,8 +3,19 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.29
+
+- #115 UI full english : toutes les chaînes visibles de l'app (cartes `started/working/done/waiting`, Peek `✓ done` / `? waiting for a reply` / `· waiting: "…"`, jauges « 7 d »/« 63% », les 11 items du menu, notification de mise à jour) passées en anglais, lexique d'état unique aligné sur la Priorité d'état, guillemets droits ; ADR-0012 acte la frontière (traces stdout, CONTEXT.md, docs et issues restent FR ; « Liseré » → « Edge outline » per les _Avoid_). (PR #122.)
+- #116 Jauges Quotas : couleurs de seuil (vert/jaune/rouge) visibles dès l'affichage, sans clic — barre `Capsule` custom remplie d'une `Color` explicite exposée par le modèle (`QuotaGauge.thresholdColor`, testée aux bornes), remplaçant le `tint` de `ProgressView` que la vibrancy du panneau non-key désaturait en gris. (PR #121.)
+- Divers : licence MIT (PR #119) ; README public débarrassé des em-dashes (#101, PR #118) ; capitalisation post-épic #85 — `docs/agents/release-ci.md` (pièges vérifiés du workflow de release : push SSH scope `workflow`, `runner.temp`, System keychain, dispatch hors branche défaut) + protocole de capture « machine équipée » et piège vibrancy dans `docs/agents/agentic-driving.md`, pointeur CLAUDE.md. (PR #120.)
+
 ## 0.1.28
 
+- #99 L'Island ne pompe plus : les Peeks en rafale sont coalescés en une seule sortie continue (contenu swappé en place), supprimant la course `hide()`/`expand()` du panneau vendoré. (PR #104 ; ligne rétro-ajoutée à la réconciliation 0.1.29 — shippée dans le tag v0.1.28 sans entrée.)
+- #103 Island visible au-dessus d'une app en plein écran : `.fullScreenAuxiliary` ajouté au panel vendoré (patch DynamicNotchKit + test miroir dans le package vendoré, note ADR-0003). (PR #105 ; ligne rétro-ajoutée, idem.)
+- #109 RecedeTests déterministe sous charge : le test attend la complétion réelle du `recedeTask` au lieu de courser un délai de grâce codé en dur. (PR #112 ; ligne rétro-ajoutée, idem.)
+- #110 Scénarios HP-03/HP-04 rafraîchis post-#79 : marqueur `×Nbg`, filtre subagent obsolète retiré. (PR #111 ; ligne rétro-ajoutée, idem.)
+- #101 README vitrine (jet 1) : refonte publique en anglais (hero, install une-ligne, structure vendeur), ADR-0011 (README public EN), échafaudage `docs/assets/`. (PR #114 ; ligne rétro-ajoutée, idem.)
 - #92 Mise à jour en un clic : le clic « ⬆ Mettre à jour vers vY.Z… » exécute `install.sh` via un seam live-only (`UpdateInstaller`, garde `-dev` non contournable), script téléchargé validé avant exécution, trace dans `~/Library/Logs/island-update.log` ; remplacement réel N→N+1 (app relancée, Accessibilité conservée) prouvé au gate HITL sur app packagée. (Épic #85, PR #106.)
 
 ## 0.1.27

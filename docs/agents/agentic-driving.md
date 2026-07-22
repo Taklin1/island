@@ -296,3 +296,53 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
 - **Pourquoi** : fiabilité + politesse — chaque tentative de clic vole le
   curseur du mainteneur ; le harnais de seam prouve le geste AX réel sans
   toucher ni au curseur ni à l'app réelle.
+
+## Machine équipée : capturer l'instance de test sans révéler l'island réelle
+
+- **Découverte** (captures vitrine, 2026-07-22) : depuis la release 0.1.28,
+  l'island.app réelle tourne en permanence sur la machine (« machine
+  équipée »). Quand une instance de test (`ISLAND_PORT`, section ci-dessus)
+  tourne à côté, la **Révélation bord-haut déclenche LES DEUX** : la bande
+  (~280 pt centrée au bord haut) est écoutée par chaque instance via son
+  moniteur souris global, un hover synthétique qui pince le bord est
+  indiscernable d'un vrai geste → le panneau de l'island réelle passe devant,
+  capte le hover, et la capture montre les **données privées des Sessions
+  réelles**, pas l'instance de test.
+- **Bonne méthode** : ne jamais warper le curseur au bord haut-centre. Pour
+  capturer l'Étendu de l'instance de test : déclencher un **Peek** (POST d'un
+  événement marquant sur le port de test — événementiel et port-isolé, l'island
+  réelle reste Masquée), puis promouvoir Peek→Étendu en survolant le panneau
+  **par en dessous** (rester sous les ~2 px du bord haut ET hors de la bande
+  centrale de 280 pt) : le hover tracking s'arme en remontant dans le panneau
+  depuis le bas. Pour la barre des menus (auto-masquée) : parquer le curseur au
+  bord haut-**DROITE**, hors bande — elle s'affiche sans révéler aucun island.
+- **Preuve** (2026-07-22, captures de la vitrine) : reveal bord-haut → double
+  island, panneau réel devant ; méthode Peek port-isolé + hover par en
+  dessous → Étendu de la seule instance de test, captures propres.
+- **Pourquoi** : sécurité + justesse — une capture destinée à un README/artefact
+  public qui montre les Sessions réelles fuit des données privées ; et le
+  panneau réel par-dessus fait conclure à tort que l'instance de test ne
+  fonctionne pas.
+
+## Captures du panneau : des jauges grises ≠ seuils cassés (vibrancy)
+
+- **Découverte** (issue #116, 2026-07-22) : sur une capture du panneau révélé
+  **sans interaction préalable**, les jauges de Quotas restent grises
+  désaturées alors que les seuils devraient les colorer (constaté : remplissage
+  gris neutre malgré 63 %, donc jaune attendu). Les couleurs n'apparaissent
+  qu'après un clic dans le panneau. Cause suspectée (mécanisme macOS, pas nos
+  seuils) : le panneau est une `nonactivatingPanel` jamais fenêtre key →
+  `controlActiveState` inactif → la vibrancy du matériau désature le `tint`
+  des contrôles système (`ProgressView`).
+- **Bonne méthode** : en vérif visuelle (FP, captures), ne PAS conclure d'une
+  jauge grise que la logique de seuil est cassée — cliquer dans le panneau (ou
+  vérifier la valeur/le libellé) pour départager le rendu du calcul. Pour toute
+  nouvelle UI du panneau, préférer des `Color` explicites (formes remplies)
+  aux tints de contrôles système, insensibles à la vibrancy — c'est l'exigence
+  de #116.
+- **Preuve** : captures live #116 — grise avant clic, colorée après clic, même
+  valeur ; les tests unitaires de seuil passent (le calcul est bon, c'est le
+  rendu).
+- **Pourquoi** : justesse — sans cette note, chaque campagne de captures
+  re-diagnostique un faux bug de seuils, et une preuve visuelle « avant/après »
+  peut être invalidée par un simple clic qui change le rendu.
