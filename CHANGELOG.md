@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.33
+
+- #131 DynamicNotchKit vendoré : `hide()` ne fuit plus sa continuation quand un `expand()`/`compact()` annule sa fermeture en vol (`SWIFT TASK CONTINUATION MISUSE`, course du cross-fade du Peek, observée à l'instrumentation de la PR #104) — `defer { completion?() }` resume-once sur tous les chemins de sortie de `closePanelTask`, fenêtre non dé-initialisée sur les chemins annulés (comportement visuel inchangé) ; garde-fou `DynamicNotchHideContinuationTests` dans la suite vendorée (`swift test --package-path Vendor/DynamicNotchKit`), patch recensé ADR-0003 + note Vendoring du README. (PR #137.)
+
 ## 0.1.32
 
 - #132 Mémoire d'Annonce : une (Session, état marquant) déjà annoncée ne re-Peeke plus en boucle (bascules du gate Sous-agents ADR-0008, réémissions identiques espacées au-delà d'un Peek — trou résiduel #104 fermé) ; seuls un Acquittement (`needsAcknowledgement` true→false, lu jamais écrit) ou un vrai nouveau tour (`UserPromptSubmit` : `lastPrompt`/`turnStartedAt` bougés, l'entrée en `.running` seule ne réarme jamais) réarment l'Annonce, le Liseré portant seul la persistance (ADR-0007) ; coalescence #99, Priorité d'état et `noPeekWhileExtended` inchangés. (PR #136.)
