@@ -65,11 +65,27 @@ public final class IslandController {
     private let viewModel = IslandViewModel()
     private var notch: DynamicNotch<ExpandedContentView, EmptyView, EmptyView>?
     private var cancellables: Set<AnyCancellable> = []
-    private var knownEndedSessionIDs: Set<String> = []
+    /// Announcement memory (#132): Sessions whose "terminé" was already
+    /// announced (Peek fired or absorbed by a live surface) and not rearmed
+    /// since. Unlike the pre-#132 per-state diff — recomputed from the current
+    /// snapshot on every refresh, so a Session leaving then re-entering the
+    /// state became "newly" marking again — this set PERSISTS across state
+    /// flips: an ADR-0008 gate flip (terminé ↔ en cours) or an identical
+    /// re-emission spaced beyond a Peek's life stays silent, the Liseré alone
+    /// carrying the persistence of attention (ADR-0007). Only an
+    /// Acknowledgement of the Session or a real new turn rearms the pair
+    /// (see ``rearmAnnouncements(for:)``).
+    private var announcedEndedSessionIDs: Set<String> = []
+    /// Twin of ``announcedEndedSessionIDs`` for the "attend" marking state.
+    private var announcedWaitingSessionIDs: Set<String> = []
+    /// Last published snapshot of each Session (#132): what the rearm pass
+    /// diffs against to observe an Acknowledgement (`needsAcknowledgement`
+    /// true→false) or a real new turn (`lastPrompt`/`turnStartedAt` moved)
+    /// from the controller's snapshot-only view of the store.
+    private var lastSnapshotByID: [String: Session] = [:]
     /// Sessions whose answer delivery is currently in flight (#81): guards a
     /// second tap during the ~500 ms verification await.
     private var answerInFlight: Set<String> = []
-    private var knownWaitingSessionIDs: Set<String> = []
     /// Recede timer of a live Peek (#99): armed on deploy and re-armed on every
     /// coalesced marking event, so a burst is ONE continuous surface that only
     /// folds back to Masqué a Peek's duration after the *last* event.
@@ -267,21 +283,72 @@ public final class IslandController {
         setCards(from: sessions)
         log("sessions: \(Self.sessionsTrace(for: sessions))")
 
+        rearmAnnouncements(for: sessions)
+
+        // A marking Session is "newly" so only while its event still awaits
+        // Acknowledgement (read-only — the exact predicate the Liseré renders,
+        // `GlowColor.desired`; this NEVER writes `needsAcknowledgement`) and
+        // while its (Session, state) pair is not in the announcement memory
+        // (#132). The `needsAcknowledgement` guard is also what keeps the
+        // rearm-by-Acknowledgement from announcing at the acknowledging
+        // snapshot itself: the pair is cleared there, but the flag is false.
         let newlyEnded = sessions.filter {
-            $0.state == .ended && !knownEndedSessionIDs.contains($0.id)
+            $0.state == .ended && $0.needsAcknowledgement
+                && !announcedEndedSessionIDs.contains($0.id)
         }
-        knownEndedSessionIDs = Set(sessions.filter { $0.state == .ended }.map(\.id))
+        announcedEndedSessionIDs.formUnion(newlyEnded.map(\.id))
 
         let newlyWaiting = sessions.filter {
-            $0.state == .waiting && !knownWaitingSessionIDs.contains($0.id)
+            $0.state == .waiting && $0.needsAcknowledgement
+                && !announcedWaitingSessionIDs.contains($0.id)
         }
-        knownWaitingSessionIDs = Set(sessions.filter { $0.state == .waiting }.map(\.id))
+        announcedWaitingSessionIDs.formUnion(newlyWaiting.map(\.id))
 
         // A blocked agent matters more than a finished one: the Peek picks the
         // most pressing newly-marking Session by the shared Priorité d'état.
         if let session = Self.mostPressingForPeek(newlyWaiting + newlyEnded) {
             peek(for: session)
         }
+    }
+
+    /// The rearm pass of the announcement memory (#132): diffs each Session
+    /// against its last published snapshot and forgets its announced pairs
+    /// when either rearm the founder decisions retained fires —
+    ///
+    /// - **Acknowledgement**: `needsAcknowledgement` true→false, the one
+    ///   observable every acknowledging path shares (card click, terminal
+    ///   refocus, answer-by-injection `resumeAfterAnswer`);
+    /// - **real new turn**: `lastPrompt` moved, or `turnStartedAt` moved to a
+    ///   fresh non-nil start — markers only `promptSubmitted` (and the
+    ///   answered-in-terminal resume) produce. The ADR-0008 gate flip touches
+    ///   NEITHER (its `.running` keeps the ended turn's nil `turnStartedAt`
+    ///   and never rewrites the prompt), so entering `.running` alone never
+    ///   rearms — the central trap of #132. `lastSummary → nil` is
+    ///   deliberately NOT used: a gate Stop whose transcript yields no summary
+    ///   would fake it. The `lastPrompt` marker survives a throttle window
+    ///   that coalesces prompt+Stop into one snapshot (the Stop never touches
+    ///   the prompt).
+    ///
+    /// Departed Sessions (closed or purged) are forgotten entirely: a Session
+    /// re-appearing later is a fresh announcement, as before #132.
+    private func rearmAnnouncements(for sessions: [Session]) {
+        for session in sessions {
+            guard let previous = lastSnapshotByID[session.id] else { continue }
+            let acknowledged = previous.needsAcknowledgement && !session.needsAcknowledgement
+            let newRealTurn = session.lastPrompt != previous.lastPrompt
+                || (session.turnStartedAt != nil && session.turnStartedAt != previous.turnStartedAt)
+            if acknowledged || newRealTurn {
+                announcedEndedSessionIDs.remove(session.id)
+                announcedWaitingSessionIDs.remove(session.id)
+            }
+        }
+        let liveIDs = Set(sessions.map(\.id))
+        announcedEndedSessionIDs.formIntersection(liveIDs)
+        announcedWaitingSessionIDs.formIntersection(liveIDs)
+        lastSnapshotByID = Dictionary(
+            sessions.map { ($0.id, $0) },
+            uniquingKeysWith: { _, last in last }
+        )
     }
 
     /// Orders the Extended cards by **Priorité d'état** (issue #44): the shared
