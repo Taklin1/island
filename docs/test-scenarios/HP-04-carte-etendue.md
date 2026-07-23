@@ -19,14 +19,17 @@ tâche de fond est vivante — ici un Sous-agent (#48/Q6, élargi #79).
   T=/tmp/hp-expanded-1.jsonl
   printf '%s\n' '{"type":"ai-title","aiTitle":"Corrige le crash du parser","sessionId":"hp-expanded-1"}' > "$T"
   ```
-- Ouverture de l'Étendu : hover synthétique CGEvent vers le haut-centre (l'Island
-  est top-center), cf. `docs/agents/agentic-driving.md`. Compiler `mouse_move` :
-  ```bash
-  swiftc -o /tmp/mouse_move docs/…/mouse_move.swift   # source dans agentic-driving.md
-  /tmp/mouse_move 720 15 && sleep 1.5 && screencapture -x /tmp/hp-expanded.png
-  /tmp/mouse_move 720 600   # rendre le curseur
-  ```
-  (Intrusif — consenti pour cette campagne. Vite, puis rendre la main.)
+- Rendu : **le screenshot d'un Étendu maintenu au hover synthétique n'est PAS
+  fiable** (panneau déployé autour du curseur ⇒ pas de `mouseEntered` natif ⇒
+  recede avant le `screencapture` ; méthode périmée, cf. « Mode Étendu » de
+  `docs/agents/agentic-driving.md`, campagnes #41 et #134). Ce qui tranche :
+  - le **mécanisme** de Révélation : la trace `révélation: N session card(s)`
+    (couvert par ailleurs par les tests purs Reveal/Recede et le FP #130) ;
+  - le **canal visuel** : capturer un **Peek** (événementiel, fenêtre ~2,5 s,
+    déclenché par le POST d'un `Stop` marquant — aucun geste souris) ;
+  - le **contenu de carte** (titre, compte) : à l'œil au **gate HITL** (vrai
+    trackpad posé sur le panneau), ou considéré inchangé si l'épopée en cours
+    ne touche pas au rendu des cartes.
 
 ## Étapes
 
@@ -45,21 +48,22 @@ tâche de fond est vivante — ici un Sous-agent (#48/Q6, élargi #79).
    ```
    Attendu trace : `island[hp-expanded-1]=running ×1bg`.
 
-4. Ouvrir l'Étendu (hover synthétique) et screenshoter. **Vérif visuelle** :
-   - Le **titre** « Corrige le crash du parser » s'affiche en haut de la carte
-     (et non le seul nom de projet `island`).
-   - Le **chemin du projet** apparaît sous le titre.
-   - La ligne discrète **« ⋯ 1 background task running »** est présente.
-   - La trace `island: [ts] expanded on hover: N session card(s)` confirme
-     l'ouverture de l'Étendu.
+4. **Canal visuel** : POSTer un `Stop` marquant sur une session dédiée
+   (`hp-peek-*`, ex. question ⇒ `waiting`) et `screencapture` pendant la fenêtre
+   du Peek (~2,5 s). Vérif : pastille Sprite + texte « projet · état : "…" ».
+
+5. **Contenu de carte** (vérif humaine, vrai trackpad posé sur le panneau, ou
+   « rendu inchangé » si l'épopée ne touche pas aux cartes) :
+   - Le **titre** « Corrige le crash du parser » en haut de la carte
+     (et non le seul nom de projet `island`), le **chemin du projet** dessous.
+   - La ligne discrète **« ⋯ 1 background task running »** présente.
 
 ## Critères de réussite
 
-- Screenshot montrant le titre de session en tête de carte + le chemin dessous
-  (#32).
-- Screenshot montrant « ⋯ 1 background task running » tant que le Sous-agent est
-  vivant (#48/Q6).
-- Le mode Étendu s'est bien ouvert (trace `expanded on hover`), curseur rendu.
+- Trace `running ×1bg` (état + décodage du compte) et titre relu du transcript.
+- Screenshot du **Peek** net (Sprite + texte) — le canal visuel événementiel.
+- Carte Étendue : confirmée à l'œil (gate HITL) ou explicitement marquée
+  « rendu intouché par l'épopée » dans le rapport.
 
 ## Hors périmètre (fixtures pures)
 
