@@ -346,3 +346,28 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
 - **Pourquoi** : justesse — sans cette note, chaque campagne de captures
   re-diagnostique un faux bug de seuils, et une preuve visuelle « avant/après »
   peut être invalidée par un simple clic qui change le rendu.
+
+## FP souris (dwell/cooldown #130) : ré-armer LOIN des panneaux, et pré-armer chaque run
+
+- **Découverte** (FP #130, 2026-07-23) : deux artefacts de chorégraphie CGEvent
+  qui miment un faux rouge sur la re-Révélation :
+  1. un `mouseMoved` posté **sous le bord haut mais au-dessus de la zone d'un
+     panneau d'island déployé** (ex. `(midX, top-300)` pendant que la vraie
+     island est ouverte) **n'atteint pas toujours le moniteur global** de
+     l'instance de test → le ré-armement (« quitter le bord ») n'est jamais vu ;
+  2. un run **hérite l'état désarmé** du run précédent : la restauration du
+     curseur par `CGWarpMouseCursorPosition` n'émet **aucun** événement, donc
+     après le repli final d'un run, aucun « quitter le bord » n'est observé
+     avant le run suivant.
+- **Bonne méthode** : dans toute chorégraphie qui exerce dwell/cooldown,
+  (a) poster le point de ré-armement **loin de tout panneau** (ex.
+  `(150, top-450)`) ; (b) commencer chaque run par ce même mouvement de
+  **pré-armement** ; (c) un seul événement d'appui en bande suffit ensuite —
+  le dwell est armé par l'événement et la Révélation vient de la task, inutile
+  de marteler des moves identiques.
+- **Preuve** : FP #130 — ré-armement à `(720,599)` jamais tracé (panneau réel
+  déployé au-dessus) puis run suivant parti `armed=false` ; avec pré-armement à
+  `(150,449)` : P1→P5 verts en un run (2 révélations, 1 repli, scrubbing muet).
+- **Pourquoi** : justesse — sans ces deux gestes, on conclut à tort que le
+  cooldown/ré-armement est cassé alors que c'est la chorégraphie qui n'a
+  jamais montré « repartir du bord » au moniteur.

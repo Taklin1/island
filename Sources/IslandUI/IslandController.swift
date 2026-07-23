@@ -76,6 +76,24 @@ public final class IslandController {
     private var peekTask: Task<Void, Never>?
     /// Anti-flicker grace before the revealed Island recedes to Masqué.
     private var recedeTask: Task<Void, Never>?
+    /// Pending press dwell (#130): armed when the cursor pins the top-centre
+    /// band, cancelled (re-armed for the next press) if it leaves before term.
+    private var dwellTask: Task<Void, Never>?
+    /// Post-fold cooldown timer (#130): while it runs, no re-Révélation — a
+    /// frame-level dip off the edge during the fold gesture re-arms nothing.
+    private var cooldownTask: Task<Void, Never>?
+    /// Whether the post-fold cooldown window is still open (#130).
+    private var recedeCooldownActive = false
+    /// Whether the Révélation is armed (#130): true initially and once the
+    /// cursor has been seen OFF the top edge since the last fold of the Étendu.
+    /// Scrubbing along the edge after a fold never re-arms — leaving then coming
+    /// back to press is the new intention that does.
+    private var revealArmed = true
+    /// Last cursor sample the monitor forwarded (#130): lets the hover-off path
+    /// tell a real leave from the spurious hover flip the deploy animation fires
+    /// while the cursor stays pinned at the edge (the panel slides under it, no
+    /// mouse event follows to cancel a wrongly-armed grace).
+    private var lastMouseSample: (location: CGPoint, screenFrame: CGRect)?
     private var mode: Mode = .hidden
     /// The marking (Session id + state) the current Peek announces (#99). A new
     /// marking event that matches it is a redundant re-announcement (an
@@ -100,17 +118,44 @@ public final class IslandController {
     /// without racing a fixed sleep against a real 300 ms grace (#109); stays
     /// 300 ms in production (anti-flicker unchanged, ADR-0007).
     private let recedeGrace: Duration
+    /// How long the cursor must stay pressed against the top-centre edge before
+    /// the Révélation deploys (#130): a quick pass through the band reveals
+    /// nothing, only a held press does. Injectable (twin of ``recedeGrace``,
+    /// `.zero` in tests) so the press settles deterministically via
+    /// ``settleDwell()`` — never a fixed sleep (#109).
+    private let dwellDuration: Duration
+    /// How long after a fold of the Étendu (geometric or hover-off) the
+    /// Révélation stays disarmed (#130), on top of the leave-the-edge re-arm: a
+    /// frame-level dip off the edge during the fold gesture must not re-arm a
+    /// rafale. Injectable (`.zero` in tests), settled via
+    /// ``settleRecedeCooldown()``.
+    private let recedeCooldown: Duration
     /// Width of the centred top-edge band that triggers a Reveal (~webcam),
     /// used by the pure ``shouldReveal(at:in:sessionCount:)`` (issue #53).
     public static let revealBandWidth: CGFloat = 280
     /// How close to the very top edge the cursor must be pinned to count as the
     /// deliberate "hard edge" gesture (a couple of points of hardware slack).
     private static let edgeTolerance: CGFloat = 2
+    /// Max width of the Étendu's *content* column (the cards), the single source
+    /// for the panel's `.frame(maxWidth:)` and the recede-band derivation (#130).
+    static let extendedContentMaxWidth: CGFloat = 340
+    /// Horizontal padding the vendored floating style adds around the content
+    /// (`NotchlessView.swift` `.padding(20)` — revisit on a vendor update), so
+    /// the *real* deployed panel is `extendedContentMaxWidth + 2 × this` wide.
+    private static let floatingStylePadding: CGFloat = 20
+    /// Guaranteed horizontal hysteresis beyond the real panel edge (#130): the
+    /// keep-alive band must outreach the panel by a margin the cursor cannot sit
+    /// on, so skimming the panel's outer edge never folds it under the pointer.
+    private static let recedeHysteresisMargin: CGFloat = 40
     /// Width of the keep-alive band around the reveal, used by the geometric
-    /// recede (issue #60). Wider than ``revealBandWidth`` (matches the panel's
-    /// `maxWidth`) so there is a horizontal hysteresis seam between "reveal" and
-    /// "recede": a cursor oscillating at the band edge triggers neither.
-    public static let recedeBandWidth: CGFloat = 340
+    /// recede (issue #60). Derived from the panel's **real** width — content plus
+    /// the vendored floating padding — plus the hysteresis margin on each side
+    /// (#130): the old fixed 340 matched the content only, leaving ~20 pt on each
+    /// side where the cursor was ON the panel yet outside the band (fold under
+    /// the pointer). Wider than ``revealBandWidth``, so a horizontal hysteresis
+    /// seam still sits between "reveal" and "recede".
+    public static let recedeBandWidth: CGFloat =
+        extendedContentMaxWidth + 2 * floatingStylePadding + 2 * recedeHysteresisMargin
     /// How far below the top edge the cursor may sit and still keep the Étendu
     /// alive (issue #60): covers the deployed panel's height so approaching or
     /// loitering over it never arms a recede — only clearly dropping away does.
@@ -125,7 +170,9 @@ public final class IslandController {
         refreshTitles: (() -> Void)? = nil,
         injectAnswer: ((_ cwd: String?, _ optionIndex: Int) async -> Bool)? = nil,
         peekDuration: Duration = .seconds(2.5),
-        recedeGrace: Duration = .milliseconds(300)
+        recedeGrace: Duration = .milliseconds(300),
+        dwellDuration: Duration = .milliseconds(120),
+        recedeCooldown: Duration = .milliseconds(700)
     ) {
         self.store = store
         self.quotaStore = quotaStore
@@ -134,6 +181,8 @@ public final class IslandController {
         self.injectAnswer = injectAnswer
         self.peekDuration = peekDuration
         self.recedeGrace = recedeGrace
+        self.dwellDuration = dwellDuration
+        self.recedeCooldown = recedeCooldown
         viewModel.activateSession = { [weak self] sessionID in
             self?.cardActivated(sessionID: sessionID)
         }
@@ -391,6 +440,67 @@ public final class IslandController {
         expandToExtended(trigger: "révélation")
     }
 
+    /// Every global mouse move lands here (#130): the `NSEvent` monitor stays a
+    /// thin shell forwarding position/screen, and this instance method holds the
+    /// press state — the geometry itself stays delegated to the pure
+    /// ``shouldReveal(at:in:sessionCount:)`` / ``shouldRecede(at:in:)``.
+    /// A press inside the band arms the dwell; leaving the band before term
+    /// re-arms it (a quick pass deploys nothing).
+    public func mouseMoved(
+        at location: CGPoint,
+        in screenFrame: CGRect,
+        sessionCount: Int
+    ) {
+        lastMouseSample = (location, screenFrame)
+        if location.y < screenFrame.maxY - Self.edgeTolerance {
+            // Off the top edge: this is the leave that re-arms the Révélation
+            // after a fold — coming back to press is a new intention (#130).
+            revealArmed = true
+        }
+        if Self.shouldReveal(at: location, in: screenFrame, sessionCount: sessionCount) {
+            if mode == .expanded {
+                // Re-entering the band while the Étendu is up cancels a pending
+                // anti-flicker grace (the pre-#130 reveal() path, unchanged).
+                reveal()
+            } else {
+                pressToReveal()
+            }
+        } else {
+            // Left the band before the dwell elapsed: the quick pass reveals
+            // nothing and the next press starts a fresh dwell.
+            dwellTask?.cancel()
+            dwellTask = nil
+            if Self.shouldRecede(at: location, in: screenFrame) {
+                recedeIfClearOfPanel()
+            }
+        }
+    }
+
+    /// The cursor is pressed in the reveal band while the Island is not
+    /// deployed: start (or keep) the dwell, and deploy when the press outlives
+    /// it (#130). At most one dwell runs — repeated moves inside the band while
+    /// it counts down keep the same press.
+    private func pressToReveal() {
+        // Post-fold guard (#130): no re-Révélation while the cooldown runs or
+        // until the cursor has left the top edge since the last fold.
+        guard revealArmed, !recedeCooldownActive else { return }
+        guard dwellTask == nil else { return }
+        dwellTask = Task { [weak self, dwellDuration] in
+            try? await Task.sleep(for: dwellDuration)
+            guard let self, !Task.isCancelled else { return }
+            self.dwellTask = nil
+            self.reveal()
+        }
+    }
+
+    /// Test seam (#130): awaits the in-flight press dwell to its real
+    /// completion, so the reveal tests assert the deploy (or its absence) on the
+    /// task's actual settle instead of racing a fixed sleep. No-op when no press
+    /// is dwelling.
+    func settleDwell() async {
+        await dwellTask?.value
+    }
+
     /// Geometric recede fallback (issue #60): the global monitor reports the
     /// cursor left the reveal band (``shouldRecede(at:in:)``) while the Étendu is
     /// open and the pointer is *not* on the panel — the case the native hover-off
@@ -463,6 +573,18 @@ public final class IslandController {
         if hovering {
             expandToExtended(trigger: "révélation (survol)")
         } else if mode == .expanded {
+            // Spurious hover-off veto (#130): the deploy animation can flip the
+            // native hover true→false while the cursor stays pinned at the top
+            // edge inside the keep-alive band (the panel slides under it) — and
+            // a pinned cursor fires no further mouse event to cancel a pending
+            // grace, so arming here would fold the panel under the press and
+            // the cooldown would then kill it. Skip the arming; the geometric
+            // path folds the Étendu when the cursor actually leaves.
+            if let sample = lastMouseSample,
+                sample.location.y >= sample.screenFrame.maxY - Self.edgeTolerance,
+                !Self.shouldRecede(at: sample.location, in: sample.screenFrame) {
+                return
+            }
             scheduleRecede()
         }
     }
@@ -505,9 +627,35 @@ public final class IslandController {
             self.mode = .hidden
             self.peekMarking = nil
             self.viewModel.showCards = false
+            self.beginRevealCooldown()
             self.log("masqué (curseur quitte le panneau)")
             await self.notch?.hide()
         }
+    }
+
+    /// Disarms the Révélation right after the Étendu folded (#130) — both fold
+    /// paths (geometric and hover-off) funnel through ``scheduleRecede()``, so
+    /// this is the single hook. Re-arming needs BOTH the cooldown to elapse and
+    /// the cursor to leave the top edge (see ``mouseMoved(at:in:sessionCount:)``);
+    /// the Peek's own fold never comes through here (its recede is `peekTask`),
+    /// so dwell/cooldown stay out of the `peek()` path (#99).
+    private func beginRevealCooldown() {
+        revealArmed = false
+        recedeCooldownActive = true
+        cooldownTask?.cancel()
+        cooldownTask = Task { [weak self, recedeCooldown] in
+            try? await Task.sleep(for: recedeCooldown)
+            guard let self, !Task.isCancelled else { return }
+            self.recedeCooldownActive = false
+        }
+    }
+
+    /// Test seam (#130): awaits the in-flight post-fold cooldown to its real
+    /// expiry, so the recede tests assert the re-arm (or its absence) on the
+    /// task's actual settle instead of racing a fixed sleep. No-op when no
+    /// cooldown is running.
+    func settleRecedeCooldown() async {
+        await cooldownTask?.value
     }
 
     // MARK: - Peek
@@ -776,7 +924,7 @@ struct SessionCardsView: View {
                 }
             }
             .padding(12)
-            .frame(maxWidth: 340)
+            .frame(maxWidth: IslandController.extendedContentMaxWidth)
             .background(
                 GeometryReader { proxy in
                     Color.clear
