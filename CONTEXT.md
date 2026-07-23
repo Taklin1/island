@@ -37,12 +37,16 @@ Mode de l'Island après Révélation : les jauges de Quotas en tête du panneau 
 Ordre de « pressant » des états d'une Session : **waiting > terminé > working > idle**. Critère unique partagé par l'Icône animée, le Liseré, le Peek et la liste Étendue (source unique `SessionState.priorityRank`, jamais recopié). Dans la liste Étendue, départage à rang égal par récence *par groupe* : `waiting` = plus ancien d'abord (anti-oubli), `terminé`/`working`/`idle` = plus frais d'abord ; ordre déterministe (départage final par id) donc pas de sautillement au rafraîchissement.
 
 **Révélation** :
-Geste qui sort l'Island de l'état Masqué à la demande : pousser le curseur contre le bord haut de l'écran (« bord franc »), dans une bande centrée ~280 pt près de la webcam. Ne se déclenche que s'il existe ≥1 Session, à tout moment (repos comme attente), plein écran compris. N'acquitte rien.
-_Avoid_ : survol (ambigu), hover
+Geste qui sort l'Island de l'état Masqué à la demande : un **appui** du curseur contre le bord haut de l'écran (« bord franc »), maintenu un court instant dans une bande centrée ~280 pt près de la webcam — un simple passage du curseur dans la bande ne révèle pas. Après un repli, la Révélation ne se ré-arme qu'une fois le curseur reparti du bord haut (pas de redéploiement en rafale). Ne se déclenche que s'il existe ≥1 Session, à tout moment (repos comme attente), plein écran compris. N'acquitte rien.
+_Avoid_ : survol (ambigu), hover, passage
 
 **Peek** :
 Sortie automatique de l'Island ~2-3 s à l'arrivée d'un Événement marquant (montre le Sprite de la Session concernée), puis retour à Masqué. Transitoire : la persistance de l'attention est portée par le Liseré, pas par le Peek.
 _Avoid_ : toast, popup
+
+**Annonce** :
+Le fait, pour une Session, de surfacer un Événement marquant (Peek, notification macOS, Liseré). Une annonce (Session, état) déjà faite ne se **ré-annonce** pas : seuls un Acquittement ou un nouveau tour réel de cette Session (nouveau prompt utilisateur) la réarment. Une bascule du gate Sous-agents ou une réémission identique (hooks/statusline) ne constituent jamais une nouvelle Annonce — la persistance de l'attention est portée par le Liseré, pas par la répétition.
+_Avoid_ : rappel, re-notification
 
 **Sprite** :
 Mascotte pixel-art animée représentant une Session, affichée dans le Peek et les cartes (Étendu) ; son animation encode l'état (travaille, dort, fini, question).
