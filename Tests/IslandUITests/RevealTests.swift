@@ -42,6 +42,45 @@ struct RevealTests {
         #expect(!IslandController.shouldReveal(at: atEdgeCentre, in: screen, sessionCount: 0))
     }
 
+    @Test("Cursor pressed at the top-centre edge through the dwell → Révélation (#130)")
+    func pressHeldThroughDwellReveals() async {
+        let store = SessionStore()
+        store.apply(AgentEvent(
+            sessionID: "s", kind: .waitingForUser(message: nil),
+            terminal: "ghostty", agent: "claude-code"
+        ))
+        // Zero dwell + awaiting the real dwell task (#109 convention): no clock
+        // margin to race, the press settles deterministically.
+        let controller = IslandController(store: store, dwellDuration: .zero)
+
+        let atEdgeCentre = CGPoint(x: screen.midX, y: screen.maxY)
+        controller.mouseMoved(at: atEdgeCentre, in: screen, sessionCount: 1)
+        await controller.settleDwell() // the press outlives the dwell
+
+        #expect(controller.isExtendedDeployed)
+    }
+
+    @Test("Quick pass through the band, out before the dwell → no Révélation (#130)")
+    func quickPassThroughTheBandRevealsNothing() async {
+        let store = SessionStore()
+        store.apply(AgentEvent(
+            sessionID: "s", kind: .waitingForUser(message: nil),
+            terminal: "ghostty", agent: "claude-code"
+        ))
+        let controller = IslandController(store: store, dwellDuration: .zero)
+
+        // The cursor crosses the band and leaves it before the dwell elapses:
+        // the exit lands (synchronously, same MainActor) before the dwell task
+        // ever runs, so even a `.zero` dwell cancels deterministically.
+        let atEdgeCentre = CGPoint(x: screen.midX, y: screen.maxY)
+        let outOfBand = CGPoint(x: screen.midX + 400, y: screen.maxY)
+        controller.mouseMoved(at: atEdgeCentre, in: screen, sessionCount: 1)
+        controller.mouseMoved(at: outOfBand, in: screen, sessionCount: 1)
+        await controller.settleDwell() // no press left dwelling → returns at once
+
+        #expect(!controller.isExtendedDeployed)
+    }
+
     @Test("Revealing acknowledges no Session — regarder ≠ traiter (#53)")
     func revealAcknowledgesNothing() {
         let store = SessionStore()
