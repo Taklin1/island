@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.32
+
+- #132 Mémoire d'Annonce : une (Session, état marquant) déjà annoncée ne re-Peeke plus en boucle (bascules du gate Sous-agents ADR-0008, réémissions identiques espacées au-delà d'un Peek — trou résiduel #104 fermé) ; seuls un Acquittement (`needsAcknowledgement` true→false, lu jamais écrit) ou un vrai nouveau tour (`UserPromptSubmit` : `lastPrompt`/`turnStartedAt` bougés, l'entrée en `.running` seule ne réarme jamais) réarment l'Annonce, le Liseré portant seul la persistance (ADR-0007) ; coalescence #99, Priorité d'état et `noPeekWhileExtended` inchangés. (PR #136.)
+
 ## 0.1.31
 
 - #130 Garde-fous de Révélation : dwell d'appui ~120 ms + cooldown post-repli ~700 ms (ré-armé seulement en quittant le bord haut) + bande de repli dérivée de la largeur réelle du panneau (contenu 340 centralisé + 2×20 de padding vendoré + 2×40 d'hystérésis = 460 pt, seam reveal/recede 30 → 90 pt) + veto du hover-off fantôme de l'animation de déploiement — le geste révéler/glisser ne pompe plus, au plus un cycle par intention ; statics géométriques purs inchangés, moniteur souris réduit à un forward, #99/#109 verts. (PR #135.)
