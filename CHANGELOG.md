@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.35
+
+- #145 Pompe résiduelle 0.1.34 éteinte sur ses deux maillons : la promotion survol→Étendu depuis Masqué est gatée par le prédicat partagé de la Révélation par pression (`revealArmed && !recedeCooldownActive`, #130), et les hover-on de la fenêtre vendorée demi-écran sont hit-testés contre la frame réelle de la vue survolable (`HoverHitTest`, parasites du fondu rejetés) — l'oscillateur de la zone morte (bord haut, 230 < dx < 360, ~3 Hz, curseur immobile) est cassé, repli géométrique légitime et bandes 460/305 intouchés ; patch vendoré recensé ADR-0003, nuance moniteurs globaux/CGEvents synthétiques capitalisée dans `agentic-driving.md` ; FP geste réel : 1 seul `masqué`, 0 redéploiement sur 6 s en zone morte, validation visuelle Loic. (PR #146.)
+
 ## 0.1.34
 
 - #141 Repli géométrique : profondeur de maintien dérivée de la hauteur RÉELLE du panneau déployé (mesure `GeometryReader` plafonnée remontée vue→contrôleur + padding vendoré + hystérésis #130, plancher 220 avant première mesure, borne demi-écran) — plus de pli sous le curseur sur les cartes basses dès ~3 sessions, le jumeau vertical du correctif de largeur #130 ; `shouldRecede` reste un static pur (profondeur en paramètre) ; FP à 5 sessions fixtures. (PR #142.)
