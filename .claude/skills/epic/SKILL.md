@@ -95,6 +95,14 @@ Si `--plan` : afficher carte + prompts et S'ARRÊTER LÀ.
   par son **agentId** (un agent au tour terminé n'est plus joignable par nom).
 - **Rapport manquant** : une notification idle peut arriver sans le rapport final ->
   renvoyer « renvoie ton rapport complet à main » au même agentId.
+- **Agent coupé** (plus visible dans l'UI, aucun process/tâche de fond vivant, branche sans
+  commit ni PR) : avant de relancer un agent NEUF sur la branche orpheline (étape 0),
+  tenter la **résurrection** — un `SendMessage` à son nom relance l'agent depuis son
+  transcript, contexte de diagnostic intact. Vérifié (epic #134) : impl-131 coupé en plein
+  débogage d'un run de fond mort sans le relancer ; ressuscité par message, il a livré sa PR.
+  Un agent neuf re-paie tout le contexte ; la résurrection est quasi gratuite - toujours
+  l'essayer d'abord. Dans le message de reprise : l'état constaté (run mort, base epic qui
+  a avancé) pour lui éviter de re-découvrir.
 - Un gotcha découvert par UN agent (environnement, build) concerne probablement TOUTE la
   flotte : le diffuser immédiatement aux agents encore en vol.
 
@@ -109,7 +117,12 @@ Pour CHAQUE PR d'issue (cible = branche epic) :
    à l'agent, pas un patch silencieux.
 2. **Vérif locale verte exigée** : `swift build` + `swift test` (+ le parcours de feature FP
    de l'issue). C'est la vérif de l'orchestrateur - pas de CI configurée pour l'instant,
-   ne pas en supposer une. Puis merge : `gh pr merge <PR> --merge`.
+   ne pas en supposer une. Se positionner par `git checkout --detach origin/<branche-PR>` :
+   la branche est souvent encore TENUE par le worktree de l'agent (`fatal: already checked
+   out`), et un checkout raté enchaîné (pipe qui masque l'échec + `&&` qui continue) fait
+   builder la MAUVAISE branche en silence - piège vécu (epic #134, PR #135) : le « Build
+   complete » vert était celui de la branche epic, pas de la PR. Puis merge :
+   `gh pr merge <PR> --merge`.
 3. **Réconciliation, STRICTEMENT gatée sur le succès du merge** (une seule chaîne `&&`,
    jamais d'étape hors chaîne, pour ne pas pousser un CHANGELOG sur un merge refusé) :
    `git pull --ff-only` (branche epic) `&&` bump `+0.0.1` `&&` entrée CHANGELOG
