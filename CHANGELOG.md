@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.34
+
+- #141 Repli géométrique : profondeur de maintien dérivée de la hauteur RÉELLE du panneau déployé (mesure `GeometryReader` plafonnée remontée vue→contrôleur + padding vendoré + hystérésis #130, plancher 220 avant première mesure, borne demi-écran) — plus de pli sous le curseur sur les cartes basses dès ~3 sessions, le jumeau vertical du correctif de largeur #130 ; `shouldRecede` reste un static pur (profondeur en paramètre) ; FP à 5 sessions fixtures. (PR #142.)
+
 ## 0.1.33
 
 - #131 DynamicNotchKit vendoré : `hide()` ne fuit plus sa continuation quand un `expand()`/`compact()` annule sa fermeture en vol (`SWIFT TASK CONTINUATION MISUSE`, course du cross-fade du Peek, observée à l'instrumentation de la PR #104) — `defer { completion?() }` resume-once sur tous les chemins de sortie de `closePanelTask`, fenêtre non dé-initialisée sur les chemins annulés (comportement visuel inchangé) ; garde-fou `DynamicNotchHideContinuationTests` dans la suite vendorée (`swift test --package-path Vendor/DynamicNotchKit`), patch recensé ADR-0003 + note Vendoring du README. (PR #137.)

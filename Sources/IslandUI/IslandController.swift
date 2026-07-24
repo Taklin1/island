@@ -110,6 +110,13 @@ public final class IslandController {
     /// while the cursor stays pinned at the edge (the panel slides under it, no
     /// mouse event follows to cancel a wrongly-armed grace).
     private var lastMouseSample: (location: CGPoint, screenFrame: CGRect)?
+    /// Last displayed height of the Étendu's content the view reported (#141):
+    /// the card list as actually rendered — measured by the view's
+    /// `GeometryReader` and already capped to ~1/4 of the screen — so the
+    /// keep-alive depth can cover the *real* panel. `nil` until the first
+    /// layout pass of the first deployment reports in; the derivation then
+    /// falls back to the conservative ``fallbackRecedeKeepAliveDepth``.
+    private var measuredPanelHeight: CGFloat?
     private var mode: Mode = .hidden
     /// The marking (Session id + state) the current Peek announces (#99). A new
     /// marking event that matches it is a redundant re-announcement (an
@@ -172,10 +179,12 @@ public final class IslandController {
     /// seam still sits between "reveal" and "recede".
     public static let recedeBandWidth: CGFloat =
         extendedContentMaxWidth + 2 * floatingStylePadding + 2 * recedeHysteresisMargin
-    /// How far below the top edge the cursor may sit and still keep the Étendu
-    /// alive (issue #60): covers the deployed panel's height so approaching or
-    /// loitering over it never arms a recede — only clearly dropping away does.
-    private static let recedeKeepAliveDepth: CGFloat = 220
+    /// Conservative keep-alive depth while no panel height was measured yet
+    /// (#141): the pre-#141 fixed depth, kept as the floor so the very first
+    /// deployment (before the view's first layout reports a height) and a short
+    /// panel (1–2 cards) behave exactly as before. The *live* depth is derived
+    /// from the real panel height — see ``recedeKeepAliveDepth``.
+    static let fallbackRecedeKeepAliveDepth: CGFloat = 220
     /// Store updates are coalesced to at most one UI refresh per interval.
     private let refreshInterval: DispatchQueue.SchedulerTimeType.Stride = .milliseconds(200)
 
@@ -205,6 +214,9 @@ public final class IslandController {
         viewModel.answerOption = { [weak self] sessionID, optionIndex in
             guard let self else { return }
             Task { await self.optionSelected(sessionID: sessionID, optionIndex: optionIndex) }
+        }
+        viewModel.panelHeightChanged = { [weak self] height in
+            self?.panelHeightDidChange(height)
         }
     }
 
@@ -537,7 +549,10 @@ public final class IslandController {
             // nothing and the next press starts a fresh dwell.
             dwellTask?.cancel()
             dwellTask = nil
-            if Self.shouldRecede(at: location, in: screenFrame) {
+            if Self.shouldRecede(
+                at: location, in: screenFrame,
+                keepAliveDepth: recedeKeepAliveDepth
+            ) {
                 recedeIfClearOfPanel()
             }
         }
@@ -622,14 +637,51 @@ public final class IslandController {
     /// so brief oscillation around the edge folds nothing. The `NSEvent` monitor
     /// asks this only while the Étendu is open and the panel is not being hovered
     /// (the native hover is the authority on "the cursor is on the panel").
+    /// The keep-alive depth is a **parameter** (#141), like the geometry: the
+    /// panel grows in height with the cards, so the caller derives the depth
+    /// from the real panel height (see ``recedeKeepAliveDepth``) — a fixed
+    /// depth shorter than the panel folded it under the cursor on the low
+    /// cards ("ça pompe" from ~3 Sessions). The function stays pure; it only
+    /// bounds the depth to the top half of the screen, so the "clearly
+    /// dropped away" recede always stays reachable whatever the caller
+    /// derives (the vendored window itself never exceeds half a screen).
     public static func shouldRecede(
         at mouseLocation: CGPoint,
-        in screenFrame: CGRect
+        in screenFrame: CGRect,
+        keepAliveDepth: CGFloat
     ) -> Bool {
         let depthBelowEdge = screenFrame.maxY - mouseLocation.y
-        let droppedBelowKeepAlive = depthBelowEdge > recedeKeepAliveDepth
+        let boundedKeepAliveDepth = min(keepAliveDepth, screenFrame.height / 2)
+        let droppedBelowKeepAlive = depthBelowEdge > boundedKeepAliveDepth
         let outsideRecedeBand = abs(mouseLocation.x - screenFrame.midX) > recedeBandWidth / 2
         return droppedBelowKeepAlive || outsideRecedeBand
+    }
+
+    /// The view's displayed panel height landed (#141): the vertical twin of
+    /// the #130 width derivation, fed by the `GeometryReader` measurement the
+    /// Étendu already takes (via the view-model callback channel). Internal so
+    /// the recede tests can drive the measurement directly — the rendering
+    /// itself is verified visually.
+    func panelHeightDidChange(_ height: CGFloat) {
+        guard height != measuredPanelHeight else { return }
+        measuredPanelHeight = height
+        log("étendu: hauteur panneau \(Int(height)) → bande de maintien \(Int(recedeKeepAliveDepth))")
+    }
+
+    /// How far below the top edge the cursor may sit and still keep the Étendu
+    /// alive (issue #60, derived in #141): covers the deployed panel's **real**
+    /// height — the displayed content the view measured plus the vendored
+    /// floating padding above and below (`NotchlessView` `.padding(20)`) — plus
+    /// the guaranteed hysteresis margin (#130 pattern), so loitering over the
+    /// low cards of a tall panel never folds it under the cursor. Never below
+    /// the pre-#141 fixed depth: the first deployment (no measurement yet) and
+    /// a short panel keep the previous behaviour.
+    var recedeKeepAliveDepth: CGFloat {
+        guard let measuredPanelHeight else { return Self.fallbackRecedeKeepAliveDepth }
+        return max(
+            Self.fallbackRecedeKeepAliveDepth,
+            measuredPanelHeight + 2 * Self.floatingStylePadding + Self.recedeHysteresisMargin
+        )
     }
 
     /// Native DynamicNotchKit hover, live only while a panel exists (`state !=
@@ -649,7 +701,10 @@ public final class IslandController {
             // path folds the Étendu when the cursor actually leaves.
             if let sample = lastMouseSample,
                 sample.location.y >= sample.screenFrame.maxY - Self.edgeTolerance,
-                !Self.shouldRecede(at: sample.location, in: sample.screenFrame) {
+                !Self.shouldRecede(
+                    at: sample.location, in: sample.screenFrame,
+                    keepAliveDepth: recedeKeepAliveDepth
+                ) {
                 return
             }
             scheduleRecede()
@@ -888,6 +943,11 @@ final class IslandViewModel: ObservableObject {
     /// Answer-by-injection (issue #27): set by the controller, called with a
     /// Session id and the tapped option index when an option button is pressed.
     var answerOption: ((String, Int) -> Void)?
+    /// Panel-height channel (#141): set by the controller, called by the
+    /// Étendu with its **displayed** content height (measured, already capped)
+    /// whenever the layout lands or changes, so the geometric recede can cover
+    /// the real panel.
+    var panelHeightChanged: ((CGFloat) -> Void)?
 }
 
 /// Expanded content: Session cards in Extended mode (hover), Peek text
@@ -954,6 +1014,20 @@ struct SessionCardsView: View {
         return sections
     }
 
+    /// A fresh measurement landed: track it for the height cap, and report the
+    /// **displayed** height — the measurement clamped by ``cappedHeight`` to
+    /// what the panel actually renders — to the controller (#141), so the
+    /// geometric recede's keep-alive depth covers the real panel, not a fixed
+    /// constant shorter than it. Zero (pre-first-layout) reports nothing: the
+    /// controller keeps its conservative fallback.
+    private func measured(_ height: CGFloat) {
+        contentHeight = height
+        guard height > 0 else { return }
+        model.panelHeightChanged?(
+            Self.cappedHeight(contentHeight: height, screenHeight: screenHeight)
+        )
+    }
+
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 8) {
@@ -995,9 +1069,9 @@ struct SessionCardsView: View {
             .background(
                 GeometryReader { proxy in
                     Color.clear
-                        .onAppear { contentHeight = proxy.size.height }
+                        .onAppear { measured(proxy.size.height) }
                         .onChange(of: proxy.size.height) { _, newValue in
-                            contentHeight = newValue
+                            measured(newValue)
                         }
                 }
             )
