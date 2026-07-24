@@ -347,6 +347,34 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
   re-diagnostique un faux bug de seuils, et une preuve visuelle « avant/après »
   peut être invalidée par un simple clic qui change le rendu.
 
+## Moniteurs globaux sourds aux CGEvents synthétiques (harnais sandboxé) : piloter par le hover natif
+
+- **Découverte** (FP #141, 2026-07-24) : depuis le harnais d'agent sandboxé,
+  les `mouseMoved` synthétiques (CGEvent, taps `cghidEventTap` ET
+  `cgSessionEventTap`, source `hidSystemState`, en rafale « glide » comme en
+  événement isolé) **déplacent réellement le curseur** mais n'atteignent
+  **aucun** moniteur global `NSEvent` — ni celui de l'instance de test, ni un
+  observateur diagnostic dédié (`AXIsProcessTrusted=true`, moniteur installé,
+  zéro événement reçu). La chorégraphie appui-en-bande du FP #130 est donc
+  **non rejouable** depuis ce contexte : aucune Révélation bord-franc, sans
+  aucune erreur visible.
+- **Bonne méthode** : ne pas conclure « la Révélation est cassée » — piloter
+  par le **hover natif**, qui ne dépend pas des moniteurs (les tracking areas
+  sont nourries par la position réelle du curseur, qui bouge bel et bien) :
+  POST d'un événement marquant (Peek port-isolé) → « glide » du curseur **par
+  en dessous** jusque dans le panneau du Peek → promotion `révélation
+  (survol)` → traces. Le chemin géométrique moniteur (`mouseMoved` →
+  `shouldRecede`) se prouve alors par ses **tests unitaires** (qui appellent
+  `mouseMoved` directement) + la trace de dérivation runtime, pas par le geste.
+- **Preuve** : FP #141 — 2 chorégraphies bord-franc muettes (0 trace),
+  observateur diagnostic muet ; puis Peek + glide par en dessous →
+  `révélation (survol): 5 session card(s)`, `étendu: hauteur panneau 225 →
+  bande de maintien 305`, repli unique au hover-off. Cursor rendu par
+  `CGWarpMouseCursorPosition` (aucun événement).
+- **Pourquoi** : justesse + vitesse — sans cette note, chaque campagne re-brûle
+  du temps à marteler des CGEvents que personne ne recevra, et peut conclure à
+  tort à un rouge sur le mécanisme de Révélation.
+
 ## FP souris (dwell/cooldown #130) : ré-armer LOIN des panneaux, et pré-armer chaque run
 
 - **Découverte** (FP #130, 2026-07-23) : deux artefacts de chorégraphie CGEvent
