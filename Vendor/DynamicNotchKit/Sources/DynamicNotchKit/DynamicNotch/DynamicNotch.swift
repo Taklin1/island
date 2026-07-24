@@ -154,9 +154,27 @@ public final class DynamicNotch<Expanded, CompactLeading, CompactTrailing>: Obse
 
     /// Updates the hover state of the DynamicNotch, and processes necessary hover behavior.
     /// - Parameter hovering: a boolean indicating whether the mouse is hovering over the notch.
-    func updateHoverState(_ hovering: Bool) {
+    /// - Parameter hoverRegion: island patch (issue #145) — the hover view's
+    ///   real frame in SwiftUI global coordinates, when the caller measured
+    ///   it. The window spans half the screen, so `onHover` can report a
+    ///   parasite `true` while the window fades out/re-creates with the
+    ///   cursor inside the frame but OUTSIDE the visible panel; a hover-on is
+    ///   only accepted if the mouse genuinely lies inside this region
+    ///   (``HoverHitTest``). `nil` (default) keeps the upstream behaviour —
+    ///   the notch-style view passes nothing. Not upstream — remove/reconcile
+    ///   if switching back to the package URL.
+    func updateHoverState(_ hovering: Bool, within hoverRegion: CGRect? = nil) {
         // Ensure that we only update when the state changes
         guard state != .hidden, hovering != isHovering else { return }
+
+        if hovering, let hoverRegion, let window = windowController?.window {
+            let mouseInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+            guard HoverHitTest.accepts(
+                mouseInWindow: mouseInWindow,
+                windowHeight: window.frame.height,
+                hoverRegion: hoverRegion
+            ) else { return }
+        }
 
         isHovering = hovering
 
