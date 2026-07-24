@@ -302,6 +302,20 @@ extension DynamicNotch {
 
         closePanelTask?.cancel()
         closePanelTask = Task {
+            // island patch (issue #131): resume-once on EVERY exit path. The
+            // cancellation guards below exit without calling `completion`, so
+            // an `expand()`/`compact()` that cancels an in-flight hide() —
+            // `closePanelTask?.cancel()` in `_expand`/`_compact`, or a newer
+            // hide() replacing this task just above — left `await hide()`'s
+            // continuation suspended forever: `SWIFT TASK CONTINUATION
+            // MISUSE: hide() leaked its continuation` (the Peek cross-fade
+            // race). The `defer` fires the completion on all paths; on the
+            // cancelled paths the window is deliberately NOT deinitialized —
+            // the canceller reuses or rebuilds it. Not upstream —
+            // remove/reconcile if switching back to the package URL. Guard:
+            // `Tests/DynamicNotchKitTests/DynamicNotchHideContinuationTests`.
+            defer { completion?() }
+
             try? await Task.sleep(for: .seconds(0.25)) // Wait for most of animation
             guard Task.isCancelled != true else { return }
 
@@ -310,7 +324,6 @@ extension DynamicNotch {
 
             guard Task.isCancelled != true else { return }
             deinitializeWindow()
-            completion?()
         }
     }
 
