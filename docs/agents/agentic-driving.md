@@ -374,6 +374,20 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
 - **Pourquoi** : justesse + vitesse — sans cette note, chaque campagne re-brûle
   du temps à marteler des CGEvents que personne ne recevra, et peut conclure à
   tort à un rouge sur le mécanisme de Révélation.
+- **Levée partielle (FP #145, 2026-07-24)** : la surdité n'est PAS universelle —
+  depuis le harnais du FP #145 (même machine, même jour), la chorégraphie
+  bord-franc synthétique (park bas → montée à y=0 centré → appui) a bien
+  déclenché la trace `révélation: 1 session card(s)` : le moniteur global a reçu
+  les CGEvents. **Sonde d'abord** (un appui bord-franc + grep de la trace) avant
+  de conclure sourd/entendant, et va **vraiment à y=0** (un « presque bord »
+  rate la tolérance de 2 pt). Inversement, la promotion Peek→survol par glisse
+  peut rester muette pendant que le mainteneur bouge sa souris (les glides se
+  font écraser — même racine que le jiggle du FP #36). Pour départager « mon
+  patch a cassé le hover » d'un artefact d'environnement : rejouer la MÊME
+  chorégraphie contre un **build témoin** (fichiers d'origine restaurés) — un
+  échec identique disculpe le patch. Piège git du témoin : `git checkout HEAD --
+  <fichiers>` réinitialise AUSSI l'index (le patch stagé est perdu) — sauvegarder
+  les fichiers patchés hors repo avant, puis les restaurer par copie.
 
 ## FP souris (dwell/cooldown #130) : ré-armer LOIN des panneaux, et pré-armer chaque run
 

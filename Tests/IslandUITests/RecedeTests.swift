@@ -314,6 +314,135 @@ struct RecedeTests {
         #expect(controller.isExtendedDeployed) // still pressed → still deployed
     }
 
+    @Test("Hover-on during the post-fold cooldown never redeploys the Étendu (#145)")
+    func hoverDuringCooldownDoesNotRedeploy() async {
+        let store = SessionStore()
+        store.apply(AgentEvent(
+            sessionID: "s", kind: .waitingForUser(message: nil),
+            terminal: "ghostty", agent: "claude-code"
+        ))
+        // A long cooldown keeps the post-fold window unambiguously open while
+        // the parasite hover lands; it is deliberately never settled — the
+        // assertion is the absence of a redeploy DURING the cooldown.
+        let controller = IslandController(
+            store: store, recedeGrace: .zero,
+            dwellDuration: .zero, recedeCooldown: .seconds(60)
+        )
+        let atEdgeCentre = CGPoint(x: screen.midX, y: screen.maxY)
+        let onPanel = CGPoint(x: screen.midX, y: screen.maxY - 80)
+
+        controller.mouseMoved(at: atEdgeCentre, in: screen, sessionCount: 1)
+        await controller.settleDwell()
+        #expect(controller.isExtendedDeployed)
+
+        // The cursor settles on the panel, then the native hover-off folds the
+        // Étendu (the #145 timeline's legitimate fold).
+        controller.mouseMoved(at: onPanel, in: screen, sessionCount: 1)
+        controller.hoverDidChange(false)
+        await controller.settleRecede()
+        #expect(!controller.isExtendedDeployed)
+
+        // The half-screen vendored window, still fading out under the cursor,
+        // fires the parasite hover-on (#145): Masqué + cooldown running → the
+        // promotion must be gated like pressToReveal, no redeploy.
+        controller.hoverDidChange(true)
+        #expect(!controller.isExtendedDeployed)
+    }
+
+    @Test("Cooldown spent but cursor never left the edge → hover-on still ignored (#145)")
+    func hoverAfterCooldownWithoutRearmDoesNotRedeploy() async {
+        let store = SessionStore()
+        store.apply(AgentEvent(
+            sessionID: "s", kind: .waitingForUser(message: nil),
+            terminal: "ghostty", agent: "claude-code"
+        ))
+        let controller = IslandController(
+            store: store, recedeGrace: .zero,
+            dwellDuration: .zero, recedeCooldown: .zero
+        )
+        let atEdgeCentre = CGPoint(x: screen.midX, y: screen.maxY)
+        let onPanel = CGPoint(x: screen.midX, y: screen.maxY - 80)
+
+        controller.mouseMoved(at: atEdgeCentre, in: screen, sessionCount: 1)
+        await controller.settleDwell()
+        controller.mouseMoved(at: onPanel, in: screen, sessionCount: 1)
+        controller.hoverDidChange(false)
+        await controller.settleRecede()
+        #expect(!controller.isExtendedDeployed)
+        await controller.settleRecedeCooldown() // even with the cooldown spent…
+
+        // …the pump's cursor is immobile: it never left the top edge since the
+        // fold, so the Révélation is not re-armed — like the press path (#130),
+        // the hover promotion must stay silent.
+        controller.hoverDidChange(true)
+        #expect(!controller.isExtendedDeployed)
+    }
+
+    @Test("Re-armed after the fold → the hover promotion works again (#145)")
+    func hoverPromotionWorksAgainAfterRearm() async {
+        let store = SessionStore()
+        store.apply(AgentEvent(
+            sessionID: "s", kind: .waitingForUser(message: nil),
+            terminal: "ghostty", agent: "claude-code"
+        ))
+        let controller = IslandController(
+            store: store, recedeGrace: .zero,
+            dwellDuration: .zero, recedeCooldown: .zero
+        )
+        let atEdgeCentre = CGPoint(x: screen.midX, y: screen.maxY)
+        let onPanel = CGPoint(x: screen.midX, y: screen.maxY - 80)
+        let offTheEdge = CGPoint(x: screen.midX, y: screen.maxY - 400)
+
+        controller.mouseMoved(at: atEdgeCentre, in: screen, sessionCount: 1)
+        await controller.settleDwell()
+        controller.mouseMoved(at: onPanel, in: screen, sessionCount: 1)
+        controller.hoverDidChange(false)
+        await controller.settleRecede()
+        #expect(!controller.isExtendedDeployed)
+
+        // Leaving the top edge re-arms (#130) and the cooldown elapses: a
+        // genuine hover on a live window must promote again, exactly as today.
+        controller.mouseMoved(at: offTheEdge, in: screen, sessionCount: 1)
+        await controller.settleRecedeCooldown()
+        controller.hoverDidChange(true)
+        #expect(controller.isExtendedDeployed)
+    }
+
+    @Test("A Peek surfaced during the post-fold cooldown still promotes on hover (#145, #99)")
+    func hoveredPeekStillPromotesDuringCooldown() async {
+        let store = SessionStore()
+        store.apply(AgentEvent(
+            sessionID: "s", kind: .waitingForUser(message: nil),
+            terminal: "ghostty", agent: "claude-code"
+        ))
+        // A long, never-settled cooldown: the Peek path must bypass the #145
+        // hover gate entirely (its fold never posts the cooldown, #99).
+        let controller = IslandController(
+            store: store, recedeGrace: .zero,
+            dwellDuration: .zero, recedeCooldown: .seconds(60)
+        )
+        let atEdgeCentre = CGPoint(x: screen.midX, y: screen.maxY)
+        let onPanel = CGPoint(x: screen.midX, y: screen.maxY - 80)
+
+        // Deploy then fold: the gate is now armed (cooldown running, disarmed).
+        controller.mouseMoved(at: atEdgeCentre, in: screen, sessionCount: 1)
+        await controller.settleDwell()
+        controller.mouseMoved(at: onPanel, in: screen, sessionCount: 1)
+        controller.hoverDidChange(false)
+        await controller.settleRecede()
+        #expect(!controller.isExtendedDeployed)
+
+        // A marking event surfaces a Peek; hovering it is a deliberate gesture
+        // on a visible panel — the promotion must survive the cooldown.
+        controller.sessionsDidChange([Session(
+            id: "p", state: .ended, cwd: "/tmp/p", agent: "claude-code",
+            needsAcknowledgement: true
+        )])
+        #expect(controller.isPeeking)
+        controller.hoverDidChange(true)
+        #expect(controller.isExtendedDeployed)
+    }
+
     @Test("Tall panel deployed: the low cards keep it alive, clearly below folds it (#141)")
     func tallPanelLowCardsKeepTheExtendedAlive() async {
         let store = SessionStore()

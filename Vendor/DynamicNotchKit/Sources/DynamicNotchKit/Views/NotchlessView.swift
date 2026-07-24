@@ -10,6 +10,12 @@ import SwiftUI
 struct NotchlessView<Expanded, CompactLeading, CompactTrailing>: View where Expanded: View, CompactLeading: View, CompactTrailing: View {
     @ObservedObject private var dynamicNotch: DynamicNotch<Expanded, CompactLeading, CompactTrailing>
     @State private var windowHeight: CGFloat = 0
+    /// island patch (issue #145): the hover view's real frame in SwiftUI
+    /// global coordinates, so a hover-on reported while the cursor is inside
+    /// the half-screen window but OUTSIDE the visible panel (fade-out /
+    /// re-creation parasite) can be rejected by a real hit-test. `.zero`
+    /// until the first geometry pass — no hit-test then (upstream behaviour).
+    @State private var hoverRegion: CGRect = .zero
     private let safeAreaInset: CGFloat = 15
 
     init(dynamicNotch: DynamicNotch<Expanded, CompactLeading, CompactTrailing>) {
@@ -40,7 +46,22 @@ struct NotchlessView<Expanded, CompactLeading, CompactTrailing>: View where Expa
                 windowHeight = newHeight
             }
             .offset(y: dynamicNotch.state == .expanded ? dynamicNotch.notchSize.height : -windowHeight)
-            .onHover(perform: dynamicNotch.updateHoverState)
+            // island patch (issue #145): measure the hover view's REAL frame
+            // and hit-test hover-on reports against it. The window spans half
+            // the screen, so during the fade-out/re-creation of the panel
+            // `onHover` fires a parasite `true` with the cursor well outside
+            // the visible panel (up to the window's edge) — the engine of the
+            // 0.1.34 residual pump. Not upstream — remove/reconcile if
+            // switching back to the package URL.
+            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { newFrame in
+                hoverRegion = newFrame
+            }
+            .onHover { hovering in
+                dynamicNotch.updateHoverState(
+                    hovering,
+                    within: hoverRegion == .zero ? nil : hoverRegion
+                )
+            }
     }
 
     private func notchContent() -> some View {
