@@ -565,7 +565,7 @@ public final class IslandController {
     private func pressToReveal() {
         // Post-fold guard (#130): no re-Révélation while the cooldown runs or
         // until the cursor has left the top edge since the last fold.
-        guard revealArmed, !recedeCooldownActive else { return }
+        guard revealGateOpen else { return }
         guard dwellTask == nil else { return }
         dwellTask = Task { [weak self, dwellDuration] in
             try? await Task.sleep(for: dwellDuration)
@@ -574,6 +574,12 @@ public final class IslandController {
             self.reveal()
         }
     }
+
+    /// The post-fold gate (#130) shared by every Révélation out of Masqué —
+    /// the press (``pressToReveal()``) and, since #145, the hover promotion
+    /// (``hoverDidChange(_:)``): open once the cooldown has elapsed AND the
+    /// cursor has left the top edge since the last fold of the Étendu.
+    private var revealGateOpen: Bool { revealArmed && !recedeCooldownActive }
 
     /// Test seam (#130): awaits the in-flight press dwell to its real
     /// completion, so the reveal tests assert the deploy (or its absence) on the
@@ -690,6 +696,21 @@ public final class IslandController {
     /// delay. Never acknowledges (ADR-0007).
     func hoverDidChange(_ hovering: Bool) {
         if hovering {
+            // Post-fold hover gate (#145): while the Island is Masqué, a
+            // hover-on is only legitimate once the Révélation is re-armed and
+            // the post-fold cooldown has elapsed — the same #130 gate
+            // `pressToReveal()` applies. Without it, the half-screen vendored
+            // window still fading out under a cursor parked in the top-edge
+            // dead zone (outside the visible panel, inside the window frame)
+            // fires a parasite hover-on that redeploys the Étendu right after
+            // its fold: the undamped ~3 Hz pump of 0.1.34. A hovered Peek
+            // (`mode == .peek`) never goes through this gate — its promotion
+            // stays cooldown-free (#99) — and hovering the deployed Étendu
+            // keeps cancelling the pending recede as before.
+            if mode == .hidden, !revealGateOpen {
+                log("survol ignoré (cooldown/réarmement post-repli)")
+                return
+            }
             expandToExtended(trigger: "révélation (survol)")
         } else if mode == .expanded {
             // Spurious hover-off veto (#130): the deploy animation can flip the

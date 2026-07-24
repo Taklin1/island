@@ -97,7 +97,12 @@ struct NotchView<Expanded, CompactLeading, CompactTrailing>: View where Expanded
         .padding(.horizontal, topCornerRadius)
         .fixedSize()
         .frame(minWidth: minWidth, minHeight: dynamicNotch.notchSize.height)
-        .onHover(perform: dynamicNotch.updateHoverState)
+        // island patch (issue #145): explicit closure — `updateHoverState`
+        // gained an optional hover-region parameter for the floating style's
+        // real hit-test; the notch style passes none (upstream behaviour).
+        .onHover { hovering in
+            dynamicNotch.updateHoverState(hovering)
+        }
     }
 
     func compactContent() -> some View {
