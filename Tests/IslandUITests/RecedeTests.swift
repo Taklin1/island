@@ -8,7 +8,9 @@ import IslandStore
 /// *around* the cursor at the top edge, so no native `mouseEntered` fires. If the
 /// cursor then leaves without ever hovering the panel, only a **geometric** recede
 /// can fold it back to Masqué. The global `NSEvent` monitor stays a thin shell and
-/// delegates the decision to the pure `shouldRecede(at:in:)` tested here; the
+/// delegates the decision to the pure `shouldRecede(at:in:keepAliveDepth:)`
+/// tested here — the keep-alive depth being derived from the real panel height
+/// (#141), like the band width is from the real panel width (#130); the
 /// anti-flicker grace and the "not on the panel" guard live in the controller.
 /// Coordinates are Cocoa screen space (origin bottom-left, top edge is `maxY`).
 @MainActor
@@ -21,21 +23,33 @@ struct RecedeTests {
     @Test("Cursor drops well below the top edge (centred) → geometric recede")
     func recedesWhenCursorDropsBelowTheEdge() {
         let wayBelow = CGPoint(x: screen.midX, y: screen.maxY - 400)
-        #expect(IslandController.shouldRecede(at: wayBelow, in: screen))
+        #expect(IslandController.shouldRecede(
+            at: wayBelow, in: screen,
+            keepAliveDepth: IslandController.fallbackRecedeKeepAliveDepth
+        ))
     }
 
     @Test("Cursor leaves the reveal band horizontally → geometric recede")
     func recedesWhenCursorLeavesTheBand() {
         let farLeft = CGPoint(x: screen.minX + 10, y: screen.maxY)
         let farRight = CGPoint(x: screen.maxX - 10, y: screen.maxY)
-        #expect(IslandController.shouldRecede(at: farLeft, in: screen))
-        #expect(IslandController.shouldRecede(at: farRight, in: screen))
+        #expect(IslandController.shouldRecede(
+            at: farLeft, in: screen,
+            keepAliveDepth: IslandController.fallbackRecedeKeepAliveDepth
+        ))
+        #expect(IslandController.shouldRecede(
+            at: farRight, in: screen,
+            keepAliveDepth: IslandController.fallbackRecedeKeepAliveDepth
+        ))
     }
 
     @Test("Cursor still pinned to the top-centre edge → no recede (still revealing)")
     func doesNotRecedeWhilePinnedAtTheEdge() {
         let atEdgeCentre = CGPoint(x: screen.midX, y: screen.maxY)
-        #expect(!IslandController.shouldRecede(at: atEdgeCentre, in: screen))
+        #expect(!IslandController.shouldRecede(
+            at: atEdgeCentre, in: screen,
+            keepAliveDepth: IslandController.fallbackRecedeKeepAliveDepth
+        ))
     }
 
     @Test("Cursor just under the edge, centred (over the panel) → no recede")
@@ -43,7 +57,10 @@ struct RecedeTests {
         // Where the deployed panel sits: the native hover keeps it open, the
         // geometric fallback must not fight it.
         let onPanel = CGPoint(x: screen.midX, y: screen.maxY - 80)
-        #expect(!IslandController.shouldRecede(at: onPanel, in: screen))
+        #expect(!IslandController.shouldRecede(
+            at: onPanel, in: screen,
+            keepAliveDepth: IslandController.fallbackRecedeKeepAliveDepth
+        ))
     }
 
     @Test("Cursor on the real panel, wider than the content band → no recede (#130)")
@@ -53,8 +70,14 @@ struct RecedeTests {
         // cursor skimming its outer edge is ON the panel and must not fold it.
         let onPanelLeftEdge = CGPoint(x: screen.midX - 185, y: screen.maxY - 80)
         let onPanelRightEdge = CGPoint(x: screen.midX + 185, y: screen.maxY - 80)
-        #expect(!IslandController.shouldRecede(at: onPanelLeftEdge, in: screen))
-        #expect(!IslandController.shouldRecede(at: onPanelRightEdge, in: screen))
+        #expect(!IslandController.shouldRecede(
+            at: onPanelLeftEdge, in: screen,
+            keepAliveDepth: IslandController.fallbackRecedeKeepAliveDepth
+        ))
+        #expect(!IslandController.shouldRecede(
+            at: onPanelRightEdge, in: screen,
+            keepAliveDepth: IslandController.fallbackRecedeKeepAliveDepth
+        ))
     }
 
     @Test("Cursor beyond the real panel plus the hysteresis margin → recede (#130)")
@@ -62,7 +85,40 @@ struct RecedeTests {
         // Past the real panel edge (~190) plus the guaranteed hysteresis margin:
         // clearly off the panel, the geometric fold applies.
         let clearOfPanel = CGPoint(x: screen.midX + 235, y: screen.maxY - 80)
-        #expect(IslandController.shouldRecede(at: clearOfPanel, in: screen))
+        #expect(IslandController.shouldRecede(
+            at: clearOfPanel, in: screen,
+            keepAliveDepth: IslandController.fallbackRecedeKeepAliveDepth
+        ))
+    }
+
+    @Test("Tall panel: cursor over the low cards, within the derived depth → no recede (#141)")
+    func doesNotRecedeOverTheLowCardsOfATallPanel() {
+        // Three-plus cards push the panel past the old fixed 220 pt keep-alive:
+        // with the depth derived from the real panel height, the low cards are
+        // still inside the band and must not fold the panel under the cursor.
+        let onLowCards = CGPoint(x: screen.midX, y: screen.maxY - 350)
+        #expect(!IslandController.shouldRecede(
+            at: onLowCards, in: screen, keepAliveDepth: 380
+        ))
+    }
+
+    @Test("Tall panel: cursor clearly below the derived depth → recede (#141)")
+    func recedesClearlyBelowTheTallPanel() {
+        let clearlyBelow = CGPoint(x: screen.midX, y: screen.maxY - 420)
+        #expect(IslandController.shouldRecede(
+            at: clearlyBelow, in: screen, keepAliveDepth: 380
+        ))
+    }
+
+    @Test("Keep-alive depth is bounded to the top half of the screen → the recede stays reachable (#141)")
+    func keepAliveDepthIsBoundedToHalfTheScreen() {
+        // Whatever the caller derives, the band must never swallow the screen:
+        // below half the screen height the "clearly dropped away" recede always
+        // applies (the vendored window itself never exceeds half a screen).
+        let lowerHalf = CGPoint(x: screen.midX, y: screen.maxY - 460)
+        #expect(IslandController.shouldRecede(
+            at: lowerHalf, in: screen, keepAliveDepth: 10_000
+        ))
     }
 
     @Test("Hysteresis seam: neither reveals nor recedes between the two bands")
@@ -71,7 +127,38 @@ struct RecedeTests {
         // band, pinned at the edge: brief oscillation here must not flicker.
         let inSeam = CGPoint(x: screen.midX + 155, y: screen.maxY)
         #expect(!IslandController.shouldReveal(at: inSeam, in: screen, sessionCount: 1))
-        #expect(!IslandController.shouldRecede(at: inSeam, in: screen))
+        #expect(!IslandController.shouldRecede(
+            at: inSeam, in: screen,
+            keepAliveDepth: IslandController.fallbackRecedeKeepAliveDepth
+        ))
+    }
+
+    // MARK: - Derived keep-alive depth (#141)
+
+    @Test("Keep-alive depth: fallback before any measurement, panel height + padding + hysteresis after (#141)")
+    func derivesKeepAliveDepthFromTheMeasuredPanelHeight() {
+        let controller = IslandController(store: SessionStore())
+
+        // Before the view's first layout reports a height: the conservative
+        // pre-#141 fallback, never a zero/short band on the first deployment.
+        #expect(
+            controller.recedeKeepAliveDepth
+                == IslandController.fallbackRecedeKeepAliveDepth
+        )
+
+        // A tall panel (3+ cards, displayed content 300 pt): the depth covers
+        // the real panel — content + 2×20 vendored padding — plus the
+        // guaranteed hysteresis margin (#130 pattern).
+        controller.panelHeightDidChange(300)
+        #expect(controller.recedeKeepAliveDepth == 380)
+
+        // A short panel (1 card): never below the pre-#141 floor — the short
+        // panel keeps today's behaviour unchanged.
+        controller.panelHeightDidChange(90)
+        #expect(
+            controller.recedeKeepAliveDepth
+                == IslandController.fallbackRecedeKeepAliveDepth
+        )
     }
 
     // MARK: - Controller wiring
@@ -225,6 +312,39 @@ struct RecedeTests {
         await controller.settleRecede()
 
         #expect(controller.isExtendedDeployed) // still pressed → still deployed
+    }
+
+    @Test("Tall panel deployed: the low cards keep it alive, clearly below folds it (#141)")
+    func tallPanelLowCardsKeepTheExtendedAlive() async {
+        let store = SessionStore()
+        // Three Sessions: the panel outgrows the old fixed 220 pt keep-alive —
+        // exactly the population the pre-#141 band folded under the cursor.
+        for id in ["s1", "s2", "s3"] {
+            store.apply(AgentEvent(
+                sessionID: id, kind: .waitingForUser(message: nil),
+                terminal: "ghostty", agent: "claude-code"
+            ))
+        }
+        let controller = IslandController(store: store, recedeGrace: .zero)
+
+        controller.reveal()
+        // The deploy's first layout reported the displayed panel content: the
+        // keep-alive depth now derives from the real height (300 → 380).
+        controller.panelHeightDidChange(300)
+        #expect(controller.isExtendedDeployed)
+
+        // Cursor loitering over the low cards — deeper than the old fixed
+        // 220 pt, still on the panel: no recede must arm.
+        let onLowCards = CGPoint(x: screen.midX, y: screen.maxY - 350)
+        controller.mouseMoved(at: onLowCards, in: screen, sessionCount: 3)
+        await controller.settleRecede() // no recede armed → returns immediately
+        #expect(controller.isExtendedDeployed)
+
+        // Clearly below the derived depth + margin: the legitimate fold.
+        let clearlyBelow = CGPoint(x: screen.midX, y: screen.maxY - 420)
+        controller.mouseMoved(at: clearlyBelow, in: screen, sessionCount: 3)
+        await controller.settleRecede()
+        #expect(!controller.isExtendedDeployed)
     }
 
     @Test("Geometric recede is a no-op when the Étendu is not deployed (#60)")
