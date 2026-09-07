@@ -4,14 +4,9 @@
 
 **Your Claude Code sessions, Dynamic Island-style.**
 
-<!-- ASSET SLOT (#101, unblock after the inaugural Release #93): badges.
-     The release badge 404s until a Release is published; the license badge
-     needs a LICENSE file committed first; the macOS badge is static and safe
-     to uncomment any time. Once the first Release exists:
 [![Latest release](https://img.shields.io/github/v/release/Taklin1/island)](https://github.com/Taklin1/island/releases/latest)
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue)
 [![License](https://img.shields.io/github/license/Taklin1/island)](LICENSE)
--->
 
 <!-- ASSET SLOT (#101, capture on a published Release build, after #93):
      hero screenshot of the Island panel open over a desktop, light + dark
