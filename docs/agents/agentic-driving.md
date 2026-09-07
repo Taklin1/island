@@ -324,6 +324,79 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
   panneau réel par-dessus fait conclure à tort que l'instance de test ne
   fonctionne pas.
 
+## Capturer le panneau sans fuiter l'écran du mainteneur : fond neutre au niveau 20
+
+- **Découverte** (captures vitrine #101, 2026-09-07) : la section précédente protège
+  l'island réelle, pas **l'écran** du mainteneur. Un `screencapture -R` du bord haut
+  capture tout ce qui se trouve DERRIÈRE le panneau — en l'occurrence les fenêtres
+  Ghostty de Loïc et le texte de ses Sessions réelles. Une capture destinée à un README
+  public est donc une fuite par construction. Et il n'y a pas d'échappatoire par la
+  capture de la fenêtre seule : `CGWindowListCreateImage` est **obsolète depuis macOS
+  15** (`swiftc` échoue, ce n'est pas un warning) et `screencapture -o -l<windowID>` sur
+  le panneau non-activant rend un **PNG entièrement blanc**.
+- **Bonne méthode** : interposer un **fond neutre plein écran au niveau de fenêtre 20** —
+  au-dessus des fenêtres normales (niveau 0), donc rien de privé n'est capturé, mais sous
+  le Liseré (25) et sous le panneau (1000), qui restent tous deux visibles. Un binaire
+  jetable suffit :
+  ```swift
+  let w = NSWindow(contentRect: screen.frame, styleMask: .borderless,
+                   backing: .buffered, defer: false, screen: screen)
+  w.level = NSWindow.Level(rawValue: 20)
+  w.ignoresMouseEvents = true
+  w.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+  w.orderFrontRegardless()
+  ```
+  puis `screencapture -x -R<x,y,w,h>` sur la zone du panneau. Trois garde-fous qui font
+  perdre une campagne entière :
+  - **Lis la taille logique de l'écran, ne la déduis pas.** `system_profiler` annonce
+    « 2560 x 1600 Retina », d'où l'on conclut 1280×800 — l'écran fait **1440×900 points**
+    et la région tombe à côté du panneau. Lis `NSScreen.main!.frame`, ou le
+    `kCGWindowBounds` de l'overlay du Liseré (plein écran).
+  - **N'exclus pas les « desktop elements » en listant les fenêtres.**
+    `CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], …)` ne
+    retourne **pas** le panneau ; `[.optionOnScreenOnly]` seul le donne (layer 1000, hôte
+    ~720×450 au bord haut ; le Liseré est layer 25 plein écran).
+  - **Capture au plus tôt ~1,6 s** après le début de la chorégraphie : à 1,0 s on
+    n'attrape que le Liseré et le fondu de déploiement.
+- **Preuve** (2026-09-07) : première sonde `-R380,0,520,300` → capture du terminal réel de
+  Loïc, texte de ses Sessions lisible, fichier détruit sur-le-champ ; `swiftc` du grabber →
+  `'CGWindowListCreateImage' was obsoleted in macOS 15.0`, binaire jamais produit ;
+  `screencapture -o -l16803` → PNG blanc ; avec le fond neutre + `-R340,0,760,660` →
+  panneau net sur dégradé, zéro pixel privé.
+- **Pourquoi** : sécurité d'abord — une capture de README publie l'écran du mainteneur ;
+  justesse ensuite — sans fond neutre on ne sait pas départager « le panneau n'est pas
+  là » de « le panneau est noyé dans le décor ».
+
+## Amener une Session en attente : c'est le hook `Notification`, pas `AskUserQuestion`
+
+- **Découverte** (captures vitrine #101, 2026-09-07) : POSTer un `PreToolUse` /
+  `tool_name: "AskUserQuestion"` ne met **pas** la Session en attente. La trace reste
+  `running(AskUserQuestion)` : ce payload ne fait que **remiser la question** (#77),
+  l'état ne bascule pas. Un FP qui compte sur ce seul hook pour exercer l'attente teste
+  donc autre chose que ce qu'il croit.
+- **Bonne méthode** : enchaîner le `PreToolUse` (qui porte la question et ses options)
+  puis un `Notification` **bloquant**, seul déclencheur de l'entrée en attente. Les types
+  bloquants sont clos : `permission_prompt`, `elicitation_dialog`, `agent_needs_input` —
+  tout le reste, `idle_prompt` compris, est non bloquant par défaut (#31).
+  ```bash
+  T=$(cat ~/.claude/island-token); U="http://127.0.0.1:$PORT/hooks/claude-code"
+  # 1) la question : options visibles sur la carte
+  curl -s -X POST "$U" -H "X-Island-Token: $T" -d '{"session_id":"s1","cwd":"/tmp/p",
+    "hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[…]}}'
+  # 2) l'entrée en attente
+  curl -s -X POST "$U" -H "X-Island-Token: $T" -d '{"session_id":"s1","cwd":"/tmp/p",
+    "hook_event_name":"Notification","notification_type":"agent_needs_input","message":"…"}'
+  ```
+  Pour une attente **sans** question (carte compacte), n'envoie que le `Notification`
+  (`permission_prompt`) : la carte affiche le message au lieu des boutons.
+- **Preuve** (2026-09-07) : `PreToolUse(AskUserQuestion)` seul →
+  `sessions: storefront-api[isl-checkout]=running(AskUserQuestion)` ; le `Notification`
+  ajouté → `waiting+question(2)`, `glow orange on`, `menu bar mascot=question`.
+  L'invariant est déjà verrouillé côté code (`ClaudeCodeAdapterTests`,
+  `isWaitingNotification`) — ce qui manquait, c'était la recette de pilotage.
+- **Pourquoi** : justesse — sans cette note, toute campagne qui a besoin d'une Session en
+  attente (FP, captures, démo) conclut à tort que le gate de #77 est cassé.
+
 ## Captures du panneau : des jauges grises ≠ seuils cassés (vibrancy)
 
 - **Découverte** (issue #116, 2026-07-22) : sur une capture du panneau révélé
@@ -388,6 +461,13 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
   échec identique disculpe le patch. Piège git du témoin : `git checkout HEAD --
   <fichiers>` réinitialise AUSSI l'index (le patch stagé est perdu) — sauvegarder
   les fichiers patchés hors repo avant, puis les restaurer par copie.
+- **Confirmation (captures #101, 2026-09-07)** : même partage sur une seule campagne — la
+  promotion Peek→survol par glisse par en dessous est restée **muette** (aucune trace
+  `révélation (survol)`), tandis que la chorégraphie bord-franc (pré-armement loin des
+  panneaux → montée à `y=0` centré → dwell ~400 ms) a tracé `révélation: 3 session
+  card(s)` du premier coup. Quand la glisse ne répond pas, ne t'acharne pas : bascule sur
+  le bord-franc. Il n'est sûr que si l'island réelle **ne tourne pas** (sinon, double
+  island — section « Machine équipée »).
 
 ## FP souris (dwell/cooldown #130) : ré-armer LOIN des panneaux, et pré-armer chaque run
 
