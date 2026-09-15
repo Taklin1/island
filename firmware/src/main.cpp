@@ -5,11 +5,18 @@
 
 #include <string>
 
+#include <lvgl.h>
+
 #include "board/board.h"
+#include "brightness.h"
 #include "config.h"
+#include "gesture.h"
 #include "net/net.h"
+#include "quota_view.h"
 #include "receiver.h"
+#include "ui/page_quotas.h"
 #include "ui/page_state.h"
+#include "ui/pager.h"
 #include "view_model.h"
 
 namespace {
@@ -25,6 +32,35 @@ bool gServing = false;
 bool gServerStarted = false;
 totem::SnapshotReceiver* gReceiver = nullptr;
 uint32_t gLastUiMs = 0;
+totem::QuotaPresenter gQuotas;
+totem::TouchNavigator gNavigator;
+
+/// LVGL input device read callback (issue #160), polled on LVGL's input
+/// timer. The touch only navigates locally (ADR-0013): pages and brightness,
+/// never a request out, nothing towards the app.
+void readTouch(lv_indev_t*, lv_indev_data_t* data) {
+    int32_t x = 0;
+    int32_t y = 0;
+    const bool touched = board::touchRead(x, y);
+    data->point.x = x;
+    data->point.y = y;
+    data->state = touched ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    // Axis check on the board (README checklist): where each press lands.
+    static bool wasTouched = false;
+    if (touched && !wasTouched) Serial.printf("[touch] down at %d,%d\n", (int)x, (int)y);
+    wasTouched = touched;
+
+    const totem::TouchStep step = gNavigator.step(touched, lv_tick_get());
+    if (step.pageChanged) ui::pagerShow(gNavigator.page());
+    if (step.brightnessStep) brightness::step();
+}
+
+void touchBegin() {
+    if (!board::touchBegin()) return;  // no touch: the state page stays up
+    lv_indev_t* touch = lv_indev_create();
+    lv_indev_set_type(touch, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(touch, readTouch);
+}
 
 /// Loads `config.json` from LittleFS. Returns nullptr on success, otherwise
 /// the on-screen reason (English, ADR-0012).
@@ -54,15 +90,23 @@ void setup() {
     Serial.begin(115200);
 
     gDisplayReady = board::displayBegin(board::begin());
-    if (gDisplayReady) ui::pageStateBegin();
+    if (gDisplayReady) {
+        brightness::begin();
+        // Both pages are built once; a tap only flips LV_OBJ_FLAG_HIDDEN.
+        lv_obj_t* statePage = ui::pageStateBegin();
+        lv_obj_t* quotasPage = ui::pageQuotasBegin();
+        ui::pagerBegin(statePage, quotasPage);
+    }
 
     totem::TotemConfig config;
     if (const char* problem = loadConfig(config)) {
         Serial.printf("[config] %s: server not started\n", problem);
+        // No touch either: the problem screen stays in view.
         if (gDisplayReady) ui::pageStateShowConfigProblem(problem);
         return;
     }
 
+    if (gDisplayReady) touchBegin();
     gReceiver = new totem::SnapshotReceiver(config.token.c_str());
     net::wifiBegin(config);
     gServing = true;
@@ -83,6 +127,7 @@ void loop() {
             gLastUiMs = millis();
             ui::pageStateUpdate(totem::viewModelFor(*gReceiver, gLastUiMs), gLastUiMs,
                                 net::wifiIp().c_str());
+            if (gQuotas.update(*gReceiver, gLastUiMs)) ui::pageQuotasUpdate(gQuotas.view());
         }
     }
     board::displayLoop();

@@ -27,6 +27,8 @@ public:
     /// The last accepted Instantané; meaningful only when `hasSnapshot()`.
     const Snapshot& snapshot() const { return snapshot_; }
     bool isConnected(uint32_t nowMs) const { return freshness_.isConnected(nowMs); }
+    /// millis() when `snapshot()` was accepted; meaningful only when `hasSnapshot()`.
+    uint32_t acceptedAtMs() const { return freshness_.lastAcceptedMs(); }
 
 private:
     std::string token_;

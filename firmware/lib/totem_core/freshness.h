@@ -21,6 +21,9 @@ public:
     /// least once per 49.7-day millis() cycle) so expiry is latched.
     bool isConnected(uint32_t nowMs) const;
 
+    /// millis() of the last accepted Instantané (0 before the first).
+    uint32_t lastAcceptedMs() const { return lastAcceptedMs_; }
+
 private:
     mutable bool connected_ = false;
     uint32_t lastAcceptedMs_ = 0;
