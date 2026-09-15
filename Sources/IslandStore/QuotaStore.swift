@@ -11,6 +11,13 @@ public struct RateLimitWindow: Equatable, Sendable {
         self.usedPercentage = usedPercentage
         self.resetsAt = resetsAt
     }
+
+    /// The consumed percentage as a whole number, rounded to nearest (half
+    /// away from zero): the one rule shared by the Quotas gauges and the Totem
+    /// Instantané (issue #156), so both always show the same figure.
+    public var roundedUsedPercentage: Int {
+        Int(usedPercentage.rounded())
+    }
 }
 
 /// Global Claude usage Quotas (CONTEXT.md): the 5 h and 7 d windows received

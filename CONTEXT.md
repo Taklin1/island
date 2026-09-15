@@ -89,3 +89,25 @@ _Avoid_ : réponse inline, quick reply
 **Injection** :
 Envoi d'une frappe clavier au terminal d'une Session, effectué uniquement quand la fenêtre/onglet de cette Session est identifiée avec certitude ET re-vérifiée à l'instant de l'envoi (fenêtre visible au cwd de la Session, instance active), routé au pid Ghostty (`postToPid`, jamais « l'app focalisée ») — une frappe ne peut ni se perdre dans le panneau ni fuir vers une autre app (ADR-0009 § Résolution #81). La cible n'est vérifiable que si son onglet est VISIBLE : depuis un autre onglet/fenêtre/Space, le clic dégrade en Click-to-focus, sans frappe.
 _Avoid_ : automation, simulation clavier
+
+## Totem
+
+**Totem** :
+Seconde Surface, physique : un petit objet posé sur le bureau (écran tactile) qui reflète l'état agrégé des Sessions selon la **Priorité d'état**, les compteurs par état et les **Quotas**. Afficheur pur : il n'Acquitte jamais, ne répond jamais, n'envoie rien à l'app ; le toucher n'y sert qu'à la navigation locale. Jamais de texte de Session (Résumé, prompt, Titre, options). Distinct de l'Island (panneau macOS).
+_Avoid_ : mini island, gadget, widget, notch, écran, afficheur
+
+**Halo** :
+Contour lumineux du Totem, miroir du Liseré : orange tant qu'une Session attend, vert tant qu'une Session a terminé sans Acquittement, éteint sinon. S'éteint uniquement par l'Acquittement fait sur le Mac. Suit l'attention non acquittée **même si le Liseré est désactivé** sur le Mac (le réglage ne concerne que l'écran du Mac) : c'est la couleur que le Liseré aurait s'il était activé. Respire lentement (anti-brûlure AMOLED), sans jamais clignoter sur un Instantané.
+_Avoid_ : liseré (réservé aux bords de l'écran Mac), glow
+
+**Instantané** :
+L'état agrégé (Priorité d'état, compteurs, Quotas) que l'app pousse au Totem à chaque changement et en battement régulier. Ne porte que des états et des pourcentages, jamais d'Événement ni de contenu de Session. Les compteurs sont l'état **brut** de chaque Session (une Session en attente acquittée compte en attente) ; seul l'état agrégé tient compte de l'Acquittement. Pas de % de contexte en v1 (il est rangé par Session). Le reset 5 h n'est affiché que comme un compte à rebours : le Totem n'a ni heure ni fuseau.
+_Avoid_ : événement (réservé à l'entrée), snapshot, payload
+
+**Relais** :
+Composant de l'app qui pousse l'Instantané au Totem. Seule voie sortante d'island ; distinct de l'Adaptateur et du Serveur local, qui sont des entrées.
+_Avoid_ : serveur, bridge, sync
+
+**Déconnecté** :
+État du Totem quand aucun Instantané n'est arrivé depuis un court délai (app fermée, réseau tombé) : mascotte endormie grise, Halo éteint, jauges estompées. Un Totem ne montre jamais un Halo périmé.
+_Avoid_ : hors-ligne, erreur

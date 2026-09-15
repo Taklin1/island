@@ -58,6 +58,26 @@ struct GlowColorTests {
         #expect(GlowColor.desired(for: sessions, enabled: true) == nil)
     }
 
+    @Test("A running Session still flagged (Stop with background tasks) never lights the Liseré")
+    func flaggedRunningSessionIsDark() {
+        let sessions = [
+            session("gated", state: .running, needsAcknowledgement: true),
+            session("fresh", state: .idle, needsAcknowledgement: true),
+        ]
+
+        #expect(GlowColor.desired(for: sessions, enabled: true) == nil)
+    }
+
+    @Test("An acknowledged waiting Session yields to a pending finished one: green")
+    func acknowledgedWaitingYieldsToPendingEnded() {
+        let sessions = [
+            session("blocked", state: .waiting, needsAcknowledgement: false),
+            session("done", state: .ended, needsAcknowledgement: true),
+        ]
+
+        #expect(GlowColor.desired(for: sessions, enabled: true) == .green)
+    }
+
     @Test("Liseré preference off: never lit, whatever the Sessions")
     func disabledPreferenceWinsOverEverything() {
         let sessions = [

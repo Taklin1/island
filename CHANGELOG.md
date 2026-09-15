@@ -3,6 +3,26 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.40
+
+- #160 Totem firmware : page Quotas (jauges 5 h / 7 d miroir de `QuotaGauges.swift` : bornes 0…100, seuils 40/75, jauge absente si fenêtre absente, `no quotas` jamais 0 %) avec compte à rebours du reset 5 h (`resetsAt - sentAt` décompté par `millis()`, borné à `now`, sans heure locale ni NTP), estompée et figée sur les dernières Quotas en Déconnecté ; tactile CST92xx (SensorLib 0.4.1 épinglée) en indev LVGL piloté par une machine de gestes pure : tap = bascule page état ↔ Quotas (pages créées une fois, Halo toujours visible), appui long = un cran parmi 4 niveaux de luminosité (registre 0x51, plancher 48, persistés NVS), retour auto à la page état après 30 s ; 37 tests natifs (98 au total) ; validation matérielle HITL en attente. (PR #165.)
+
+## 0.1.39
+
+- #159 Totem firmware : page état LVGL — mascotte pixel-art ×15 sans antialiasing (Sprites de l'app exportés par `scripts/export_totem_sprites.py` vers `firmware/src/generated/totem_sprites.h`, table frames/fps miroir de `Sprites.swift` épinglée par test, `--check` déterministe), 4 animations selon l'état agrégé, compteurs bruts en anglais, Halo orange/vert sur `lv_layer_top()` en lueur intérieure (couleurs du Liseré) avec respiration lente 60-100 % anti-brûlure, mascotte grise + Halo éteint + compteurs masqués en Déconnecté ; `PagePresenter` pur : zéro redessin sur Instantané identique ou battement, frame jamais redémarrée hors changement d'animation ; 29 tests natifs (61 au total) ; validation matérielle HITL en attente. (PR #164.)
+
+## 0.1.38
+
+- #158 Totem firmware : squelette PlatformIO `firmware/` (ESP32-C6 Waveshare AMOLED 2.16", pioarduino 55.03.38-1 épinglé, libs épinglées, env `native`) — serveur entrant `POST /snapshot` avec `X-Island-Token` (401 → 413 → 400 → 204, corps lu en flux plafonné à 2 Ko, comparaison de token à durée constante), décodage de l'Instantané v1 contre `firmware/contract/`, Déconnecté au démarrage / après 30 s / sur `shutdown` (fraîcheur `millis()` verrouillée), config Wi-Fi/token sur LittleFS (absente ou token vide → message, serveur non démarré), mDNS `island-totem.local`, écran texte anglais (état, compteurs, IP) ; 32 tests natifs ; installation PlatformIO via `uv` sur Python 3.13 ; validation matérielle HITL en attente. (PR #163.)
+
+## 0.1.37
+
+- #157 Totem : Relais HTTP (module `IslandRelay`) — `TotemRelay` pousse l'Instantané vers `POST /snapshot` (`X-Island-Token`) à chaque changement (`removeDuplicates` + throttle 200 ms) et en battement ~10 s compté depuis la dernière requête, une seule requête en vol (le plus récent en attente gagne), jamais bloquant pour le store ; Instantané vide best-effort au passage à off et au quit propre (`applicationShouldTerminate` différé, borné ~1 s) ; transport URLSession éphémère dédié (2 s/3 s, `Connection: close`) avec trace d'erreur complète ; réglages menu « Totem relay » (off par défaut) et « Totem address & token… » (adresse normalisée, token distinct du Serveur local) ; `NSLocalNetworkUsageDescription` + `NSAllowsLocalNetworking` dans l'Info.plist ; validation matérielle HITL en attente. (PR #162.)
+
+## 0.1.36
+
+- #156 Totem : Instantané pur `TotemSnapshot` (contrat JSON v1 compact à clés triées : `state` agrégé par la Priorité d'état non acquittée, `counts` bruts, Quotas 5 h/7 j en pourcentage entier + reset epoch Unix optionnel, `sentAt`, `shutdown` ; ni contexte, ni halo, ni texte/identifiant de Session) figé par les fixtures `firmware/contract/` (golden octet pour octet + test négatif sentinelles) ; agrégat d'attention unique `SessionAttention` remonté dans IslandStore, Icône animée, Liseré et jauges Quotas y délèguent sans changement de comportement. (PR #161.)
+
 ## 0.1.35
 
 - #145 Pompe résiduelle 0.1.34 éteinte sur ses deux maillons : la promotion survol→Étendu depuis Masqué est gatée par le prédicat partagé de la Révélation par pression (`revealArmed && !recedeCooldownActive`, #130), et les hover-on de la fenêtre vendorée demi-écran sont hit-testés contre la frame réelle de la vue survolable (`HoverHitTest`, parasites du fondu rejetés) — l'oscillateur de la zone morte (bord haut, 230 < dx < 360, ~3 Hz, curseur immobile) est cassé, repli géométrique légitime et bandes 460/305 intouchés ; patch vendoré recensé ADR-0003, nuance moniteurs globaux/CGEvents synthétiques capitalisée dans `agentic-driving.md` ; FP geste réel : 1 seul `masqué`, 0 redéploiement sur 6 s en zone morte, validation visuelle Loic. (PR #146.)

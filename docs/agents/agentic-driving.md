@@ -493,3 +493,34 @@ skill `agentic-tests` pour le protocole ; ici : les pièges d'outillage).
 - **Pourquoi** : justesse — sans ces deux gestes, on conclut à tort que le
   cooldown/ré-armement est cassé alors que c'est la chorégraphie qui n'a
   jamais montré « repartir du bord » au moniteur.
+
+## Quitter proprement le binaire debug : Apple Event quit par pid, pas `kill`
+
+- **Découverte** (FP #157, 2026-09-15) : le Relais envoie son Instantané vide
+  dans `applicationShouldTerminate` (`.terminateLater`). Un `kill`/`pkill`
+  (SIGTERM) tue le process **sans** passer par ce chemin, et le binaire nu n'a
+  pas de bundle id pour `osascript -e 'quit app …'` : aucun des réflexes ne
+  prouve la terminaison propre. Au passage, un domaine defaults `Island`
+  **absent** (état initial d'une machine où aucun FP n'a tourné) laisse
+  `hooksInstallAttempted` à faux : le binaire debug installerait les hooks
+  dans `~/.claude/settings.json` au lancement.
+- **Bonne méthode** : pré-poser `defaults write Island hooksInstallAttempted
+  -bool true` (puis `defaults delete Island` en fin de FP si le domaine
+  n'existait pas), et quitter par l'Apple Event quit adressé au pid, qui prend
+  exactement le chemin du menu « Quit Island » :
+  ```bash
+  osascript -l JavaScript -e 'ObjC.import("AppKit");
+    $.NSRunningApplication.runningApplicationWithProcessIdentifier(<pid>).terminate'
+  ```
+  Le pid est celui de `.build/debug/Island`, pas du `zsh -c` parent
+  (`pgrep -f "^\.build/debug/Island"`). Faux Totem : un `http.server` Python
+  sur 127.0.0.1 qui journalise en JSONL (le loopback n'est pas soumis à la
+  permission Réseau local) ; Totem muet : un socket en `listen()` qui n'`accept`
+  jamais.
+- **Preuve** : `terminate sent=true` → traces `terminating — flushing the totem
+  relay` → `shutdown push state=idle → HTTP 200` → sortie du process ≈1 s,
+  Instantané `shutdown: true` reçu par le faux Totem ; contre un Totem muet,
+  requête annulée et sortie bornée à ~1 s.
+- **Pourquoi** : justesse — seule la vraie boucle de terminaison d'AppKit
+  prouve que `reply(toApplicationShouldTerminate:)` part bien depuis la boucle
+  modale de terminaison ; un test unitaire de `shutdown()` ne le peut pas.

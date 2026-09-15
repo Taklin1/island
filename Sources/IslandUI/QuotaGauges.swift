@@ -47,7 +47,7 @@ struct QuotaGauge: Identifiable, Equatable {
         QuotaGauge(
             id: id,
             windowLabel: label,
-            percentLabel: "\(Int(window.usedPercentage.rounded()))%",
+            percentLabel: "\(window.roundedUsedPercentage)%",
             fraction: min(1, max(0, window.usedPercentage / 100)),
             resetLabel: window.resetsAt.map { "↺ " + Self.timeFormatter.string(from: $0) }
         )

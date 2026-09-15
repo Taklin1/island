@@ -14,9 +14,12 @@ public enum GlowColor: Equatable, Sendable {
     /// a finished one.
     public static func desired(for sessions: [Session], enabled: Bool) -> GlowColor? {
         guard enabled else { return nil }
-        let pending = sessions.filter(\.needsAcknowledgement)
-        if pending.contains(where: { $0.state == .waiting }) { return .orange }
-        if pending.contains(where: { $0.state == .ended }) { return .green }
-        return nil
+        // Same aggregate as the Icône animée and the Totem (issue #156):
+        // only unacknowledged waiting/ended press, waiting ranks first.
+        switch SessionAttention.mostPressingState(among: sessions) {
+        case .waiting: return .orange
+        case .ended: return .green
+        case .running, .idle: return nil
+        }
     }
 }

@@ -33,16 +33,9 @@ public enum SpriteAnimation: String, CaseIterable, Sendable {
     /// mascot. No Session, or everything acknowledged, lets the mascot sleep.
     /// One mascot only — never a per-Session badge or count.
     public static func menuBarMascot(for sessions: [Session]) -> SpriteAnimation {
-        // Only *unacknowledged* waiting/ended still press; running/idle always
-        // count. Among what presses, the most pressing state wins by the shared
-        // Priorité d'état rank (issue #44) — no re-encoding of the order here.
-        let pressing = sessions.filter { session in
-            switch session.state {
-            case .waiting, .ended: session.needsAcknowledgement
-            case .running, .idle: true
-            }
-        }
-        let winning = pressing.map(\.state).min { $0.priorityRank < $1.priorityRank } ?? .idle
+        // The aggregate lives in IslandStore (issue #156), shared with the
+        // Liseré and the Totem Instantané — never re-encoded here.
+        let winning = SessionAttention.mostPressingState(among: sessions)
         return animation(for: winning)
     }
 }
