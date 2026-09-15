@@ -24,25 +24,25 @@ totem::SnapshotReceiver* gReceiver = nullptr;
 uint32_t gLastUiMs = 0;
 
 /// Loads `config.json` from LittleFS. Returns nullptr on success, otherwise
-/// the (ASCII, on-screen) reason.
+/// the on-screen reason (English, ADR-0012).
 const char* loadConfig(totem::TotemConfig& config) {
     // Never format: an unformatted partition means `uploadfs` was not run.
-    if (!LittleFS.begin(false)) return "LittleFS vide";
+    if (!LittleFS.begin(false)) return "LittleFS empty";
     File file = LittleFS.open(kConfigPath, "r");
-    if (!file) return "config.json absent";
-    if (file.size() > kMaxConfigBytes) return "config.json trop gros";
+    if (!file) return "config.json missing";
+    if (file.size() > kMaxConfigBytes) return "config.json too large";
     std::string json(file.size(), '\0');
     const size_t read = file.read(reinterpret_cast<uint8_t*>(&json[0]), json.size());
     file.close();
-    if (read != json.size()) return "config.json illisible";
+    if (read != json.size()) return "config.json unreadable";
 
     switch (totem::parseConfig(json.data(), json.size(), config)) {
         case totem::ConfigResult::Ok: return nullptr;
-        case totem::ConfigResult::InvalidJson: return "config.json invalide";
-        case totem::ConfigResult::MissingSsid: return "ssid manquant";
-        case totem::ConfigResult::MissingToken: return "token vide";
+        case totem::ConfigResult::InvalidJson: return "config.json invalid";
+        case totem::ConfigResult::MissingSsid: return "ssid missing";
+        case totem::ConfigResult::MissingToken: return "token empty";
     }
-    return "config.json invalide";
+    return "config.json invalid";
 }
 
 }  // namespace

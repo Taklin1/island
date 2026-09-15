@@ -17,30 +17,17 @@ Cette version affiche du texte brut : Connecté / Déconnecté, état agrégé, 
 
 ## Installation
 
+PlatformIO 6.2.0 s'installe avec `uv`, sur Python 3.13 :
+
 ```sh
-brew install platformio
+uv tool install platformio==6.2.0 --python 3.13   # pio dans ~/.local/bin/pio
 ```
+
+Pas de `brew install platformio` : sur macOS 26.2, le Python 3.14 de Homebrew qu'il embarque ne charge plus `pyexpat`, et la plateforme pioarduino échoue en créant son environnement Python `~/.platformio/penv` (`ensurepip`).
+
+N'alternez pas avec un autre `pio` (Homebrew, venv…) : s'il tourne sur une autre version de Python, il recrée `~/.platformio/penv` et peut le casser. Vérifiez `which pio` en cas de doute.
 
 Le premier `pio run -e totem_c6` télécharge la plateforme pioarduino épinglée, le core Arduino et la toolchain RISC-V (1 à 2 Go dans `~/.platformio`). S'il est interrompu, relancez-le : les téléchargements sont en cache.
-
-### Dépannage : `ensurepip` échoue à la création de `penv`
-
-Symptôme au premier `pio run -e totem_c6` :
-
-```
-Error: Failed to create virtual environment: Command '[..., '-m', 'venv', '--clear', '~/.platformio/penv']' returned non-zero exit status 1.
-```
-
-Cause constatée (2026-09-15, macOS 26.2) : le Python 3.14 de Homebrew embarqué par `platformio` ne charge plus `pyexpat` (symbole absent de la `libexpat` système), donc `ensurepip` plante. La plateforme pioarduino a besoin d'un environnement Python sain dans `~/.platformio/penv`. Contournement vérifié : faire tourner PlatformIO 6.2.0 sur un Python 3.13 sain (python.org), par exemple dans un venv
-
-```sh
-python3.13 -m venv ~/.venvs/platformio
-~/.venvs/platformio/bin/pip install platformio==6.2.0
-mv ~/.platformio/penv ~/.platformio/penv.broken
-~/.venvs/platformio/bin/pio run -e totem_c6
-```
-
-(`uv tool install platformio --python 3.13` revient au même.) N'alternez pas ensuite avec le `pio` de Homebrew : il détecte une autre version de Python et recrée, donc recasse, `penv`.
 
 ## Configuration : Wi-Fi et token
 
@@ -55,7 +42,7 @@ Renseignez dans `data/config.json` :
 
 - `ssid` : un réseau **2,4 GHz** (l'ESP32-C6 ne voit pas le 5 GHz), **sans isolation client** et hors réseau invité, sinon le Mac ne joint pas le Totem ;
 - `password` : le mot de passe Wi-Fi (vide pour un réseau ouvert) ;
-- `token` : le token partagé, le même que celui saisi dans le menu island (#157). **Un token vide est refusé** : le Totem affiche `CONFIG A CORRIGER` et ne démarre pas le serveur.
+- `token` : le token partagé, le même que celui saisi dans le menu island (#157). **Un token vide est refusé** : le Totem affiche `CONFIG ERROR` (`token empty`) et ne démarre pas le serveur.
 
 Envoyez la config sur la carte (branchée en USB) :
 
@@ -95,7 +82,7 @@ Au démarrage, l'écran affiche l'IP obtenue (`IP 192.168.x.y`) et `island-totem
 TOKEN=...   # le token de data/config.json
 curl -i -X POST http://island-totem.local/snapshot \
   -H "X-Island-Token: $TOKEN" -H "Content-Type: application/json" \
-  --data-binary @contract/snapshot-nominal.json      # 204, écran CONNECTE / TERMINE
+  --data-binary @contract/snapshot-nominal.json      # 204, écran CONNECTED / done
 curl -i -X POST http://island-totem.local/snapshot \
   --data-binary @contract/snapshot-nominal.json      # 401, écran inchangé
 ```
@@ -111,7 +98,7 @@ curl -i -X POST http://island-totem.local/snapshot \
 
 **Déconnecté** : au démarrage jusqu'au premier Instantané accepté, après 30 s sans Instantané accepté, et immédiatement sur un Instantané `shutdown: true` (fermeture de l'app). Le prochain Instantané normal repasse Connecté. Une requête refusée ne rafraîchit jamais. En Déconnecté, l'écran n'affiche ni état ni compteurs périmés.
 
-L'écran utilise les polices Montserrat intégrées à LVGL, qui ne couvrent que l'ASCII : les libellés sont en capitales sans accents.
+Les libellés à l'écran sont en anglais, avec le lexique d'état d'ADR-0012 (`waiting`, `done`, `working`, `idle`) : `CONNECTED` / `DISCONNECTED`, `CONFIG ERROR`, `Wi-Fi: connecting...`. Ils restent en ASCII, seul jeu couvert par les polices Montserrat intégrées à LVGL.
 
 ## Si le Totem reste Déconnecté
 

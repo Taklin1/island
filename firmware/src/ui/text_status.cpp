@@ -1,7 +1,8 @@
 // Plain-text status screen (issue #158).
 //
-// LVGL's built-in Montserrat fonts only cover ASCII: on-screen French is
-// written in capitals without accents (DECONNECTE, TERMINE).
+// On-screen strings are English (ADR-0012), with the ADR-0012 state lexicon
+// (`idle` for the aggregate too, as in contract v1). ASCII only, which is
+// all LVGL's built-in Montserrat fonts cover.
 #include "text_status.h"
 
 #include <lvgl.h>
@@ -10,7 +11,7 @@ namespace ui {
 
 namespace {
 
-lv_obj_t* gLink = nullptr;     // CONNECTE / DECONNECTE
+lv_obj_t* gLink = nullptr;     // CONNECTED / DISCONNECTED
 lv_obj_t* gState = nullptr;    // aggregated state
 lv_obj_t* gCounts = nullptr;   // per-state counts
 lv_obj_t* gAddress = nullptr;  // IP
@@ -43,10 +44,10 @@ void setColor(lv_obj_t* label, lv_color_t color) {
 
 const char* stateText(totem::AggregateState state) {
     switch (state) {
-        case totem::AggregateState::Waiting: return "EN ATTENTE";
-        case totem::AggregateState::Done: return "TERMINE";
-        case totem::AggregateState::Working: return "EN COURS";
-        case totem::AggregateState::Idle: return "REPOS";
+        case totem::AggregateState::Waiting: return "waiting";
+        case totem::AggregateState::Done: return "done";
+        case totem::AggregateState::Working: return "working";
+        case totem::AggregateState::Idle: return "idle";
     }
     return "?";
 }
@@ -67,30 +68,30 @@ void textStatusBegin() {
     gAddress = addLabel(screen, &lv_font_montserrat_20);
     gMdns = addLabel(screen, &lv_font_montserrat_20);
 
-    setText(gLink, "DECONNECTE");
+    setText(gLink, "DISCONNECTED");
     setColor(gLink, kDimColor);
     setText(gMdns, "island-totem.local");
 }
 
 void textStatusShowConfigProblem(const char* problem) {
-    setText(gLink, "CONFIG A CORRIGER");
+    setText(gLink, "CONFIG ERROR");
     setColor(gLink, kProblemColor);
     setText(gState, problem);
-    setText(gCounts, "data/config.json puis\npio run -t uploadfs");
-    setText(gAddress, "serveur non demarre");
+    setText(gCounts, "edit data/config.json then\npio run -t uploadfs");
+    setText(gAddress, "server not started");
     setText(gMdns, "");
 }
 
 void textStatusUpdate(const totem::SnapshotReceiver& receiver, uint32_t nowMs, const String& ip) {
     const bool connected = receiver.isConnected(nowMs);
-    setText(gLink, connected ? "CONNECTE" : "DECONNECTE");
+    setText(gLink, connected ? "CONNECTED" : "DISCONNECTED");
     setColor(gLink, connected ? kConnectedColor : kDimColor);
 
     // A Déconnecté Totem never shows a stale state.
     if (connected && receiver.hasSnapshot()) {
         const totem::Snapshot& snapshot = receiver.snapshot();
         char counts[96];
-        snprintf(counts, sizeof counts, "attente %u   termine %u\nen cours %u   repos %u",
+        snprintf(counts, sizeof counts, "waiting %u   done %u\nworking %u   idle %u",
                  static_cast<unsigned>(snapshot.counts.waiting),
                  static_cast<unsigned>(snapshot.counts.done),
                  static_cast<unsigned>(snapshot.counts.working),
@@ -106,7 +107,7 @@ void textStatusUpdate(const totem::SnapshotReceiver& receiver, uint32_t nowMs, c
     if (ip.length() > 0) {
         snprintf(address, sizeof address, "IP %s", ip.c_str());
     } else {
-        snprintf(address, sizeof address, "Wi-Fi : connexion...");
+        snprintf(address, sizeof address, "Wi-Fi: connecting...");
     }
     setText(gAddress, address);
     setText(gMdns, "island-totem.local");
