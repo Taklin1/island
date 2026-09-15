@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.37
+
+- #157 Totem : Relais HTTP (module `IslandRelay`) — `TotemRelay` pousse l'Instantané vers `POST /snapshot` (`X-Island-Token`) à chaque changement (`removeDuplicates` + throttle 200 ms) et en battement ~10 s compté depuis la dernière requête, une seule requête en vol (le plus récent en attente gagne), jamais bloquant pour le store ; Instantané vide best-effort au passage à off et au quit propre (`applicationShouldTerminate` différé, borné ~1 s) ; transport URLSession éphémère dédié (2 s/3 s, `Connection: close`) avec trace d'erreur complète ; réglages menu « Totem relay » (off par défaut) et « Totem address & token… » (adresse normalisée, token distinct du Serveur local) ; `NSLocalNetworkUsageDescription` + `NSAllowsLocalNetworking` dans l'Info.plist ; validation matérielle HITL en attente. (PR #162.)
+
 ## 0.1.36
 
 - #156 Totem : Instantané pur `TotemSnapshot` (contrat JSON v1 compact à clés triées : `state` agrégé par la Priorité d'état non acquittée, `counts` bruts, Quotas 5 h/7 j en pourcentage entier + reset epoch Unix optionnel, `sentAt`, `shutdown` ; ni contexte, ni halo, ni texte/identifiant de Session) figé par les fixtures `firmware/contract/` (golden octet pour octet + test négatif sentinelles) ; agrégat d'attention unique `SessionAttention` remonté dans IslandStore, Icône animée, Liseré et jauges Quotas y délèguent sans changement de comportement. (PR #161.)
