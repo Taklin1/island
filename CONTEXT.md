@@ -97,11 +97,11 @@ Seconde Surface, physique : un petit objet posé sur le bureau (écran tactile) 
 _Avoid_ : mini island, gadget, widget, notch, écran, afficheur
 
 **Halo** :
-Contour lumineux du Totem, miroir du Liseré : orange tant qu'une Session attend, vert tant qu'une Session a terminé sans Acquittement, éteint sinon. S'éteint uniquement par l'Acquittement fait sur le Mac.
+Contour lumineux du Totem, miroir du Liseré : orange tant qu'une Session attend, vert tant qu'une Session a terminé sans Acquittement, éteint sinon. S'éteint uniquement par l'Acquittement fait sur le Mac. Suit l'attention non acquittée **même si le Liseré est désactivé** sur le Mac (le réglage ne concerne que l'écran du Mac) : c'est la couleur que le Liseré aurait s'il était activé. Respire lentement (anti-brûlure AMOLED), sans jamais clignoter sur un Instantané.
 _Avoid_ : liseré (réservé aux bords de l'écran Mac), glow
 
 **Instantané** :
-L'état agrégé (Priorité d'état, compteurs, Quotas) que l'app pousse au Totem à chaque changement et en battement régulier. Ne porte que des états et des pourcentages, jamais d'Événement ni de contenu de Session.
+L'état agrégé (Priorité d'état, compteurs, Quotas) que l'app pousse au Totem à chaque changement et en battement régulier. Ne porte que des états et des pourcentages, jamais d'Événement ni de contenu de Session. Les compteurs sont l'état **brut** de chaque Session (une Session en attente acquittée compte en attente) ; seul l'état agrégé tient compte de l'Acquittement. Pas de % de contexte en v1 (il est rangé par Session). Le reset 5 h n'est affiché que comme un compte à rebours : le Totem n'a ni heure ni fuseau.
 _Avoid_ : événement (réservé à l'entrée), snapshot, payload
 
 **Relais** :
