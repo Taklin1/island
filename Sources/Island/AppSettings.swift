@@ -1,4 +1,5 @@
 import Foundation
+import IslandRelay
 import ServiceManagement
 
 /// Persisted app preferences (UserDefaults). Border (Liseré) and sound are
@@ -18,9 +19,14 @@ struct AppSettings {
     static let lastNotifiedUpdateVersionKey = "lastNotifiedUpdateVersion"
 
     private let defaults: UserDefaults
+    /// Relais (issue #157): on/off (OFF by default), Totem address and token.
+    /// Lives in IslandRelay so its defaults and address normalization are
+    /// unit-tested; it registers its own `totemRelayEnabled: false` default.
+    let relay: RelaySettings
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.relay = RelaySettings(defaults: defaults)
         defaults.register(defaults: [
             Self.borderEnabledKey: true,
             Self.soundEnabledKey: true,

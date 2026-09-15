@@ -113,6 +113,10 @@ printf 'APPL????' > "${APP_DIR}/Contents/PkgInfo"
 # Info.plist. LSUIElement=true → accessory app, no Dock icon (matches
 # setActivationPolicy(.accessory) in main.swift). No sandbox: the app reads
 # ~/.claude and, later (#22), uses Accessibility.
+# Relais (#157, ADR-0014): the POST to the Totem on the LAN needs the macOS
+# Local Network permission (TN3179) — NSLocalNetworkUsageDescription is the
+# text of its alert. NSAllowsLocalNetworking declares the plain-HTTP LAN
+# intent (ATS was empirically not blocking, kept as a statement of intent).
 cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -141,6 +145,13 @@ ${ICON_KEY}
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>island — personal build</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>island sends the state of your Claude Code sessions to your Totem on the local network.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

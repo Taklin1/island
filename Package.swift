@@ -30,6 +30,10 @@ let package = Package(
         // Click-to-focus (issue #10): brings the Session's terminal frontmost
         // and acknowledges on terminal focus.
         .target(name: "IslandFocus", dependencies: ["IslandStore"]),
+        // Relais (issue #157, ADR-0014): pushes the Instantané to the Totem over
+        // plain HTTP on the LAN — the app's only outbound path, fed by the
+        // store and the QuotaStore, never by the hooks.
+        .target(name: "IslandRelay", dependencies: ["IslandStore"]),
         // Floating Island UI (DynamicNotchKit): compact bar + peek on events.
         // Resources: embedded pixel-art sprite sheets (issue #11), generated
         // by scripts/generate_sprites.py.
@@ -43,13 +47,18 @@ let package = Package(
             name: "Island",
             dependencies: [
                 "IslandStore", "ClaudeCodeAdapter", "IslandServer", "IslandUI",
-                "IslandInstaller", "IslandGlow", "IslandFocus",
+                "IslandInstaller", "IslandGlow", "IslandFocus", "IslandRelay",
             ]
         ),
         .testTarget(name: "IslandStoreTests", dependencies: ["IslandStore"]),
         .testTarget(name: "IslandGlowTests", dependencies: ["IslandGlow", "IslandStore"]),
         .testTarget(name: "IslandFocusTests", dependencies: ["IslandFocus", "IslandStore"]),
         .testTarget(name: "IslandInstallerTests", dependencies: ["IslandInstaller"]),
+        // The fake Totem reuses the local server's HTTP parser (@testable).
+        .testTarget(
+            name: "IslandRelayTests",
+            dependencies: ["IslandRelay", "IslandStore", "IslandServer"]
+        ),
         // Pure presentation logic only (labels, glyphs, durations) — the
         // SwiftUI rendering itself is checked visually, never by tests.
         .testTarget(
