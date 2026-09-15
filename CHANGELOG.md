@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.39
+
+- #159 Totem firmware : page état LVGL — mascotte pixel-art ×15 sans antialiasing (Sprites de l'app exportés par `scripts/export_totem_sprites.py` vers `firmware/src/generated/totem_sprites.h`, table frames/fps miroir de `Sprites.swift` épinglée par test, `--check` déterministe), 4 animations selon l'état agrégé, compteurs bruts en anglais, Halo orange/vert sur `lv_layer_top()` en lueur intérieure (couleurs du Liseré) avec respiration lente 60-100 % anti-brûlure, mascotte grise + Halo éteint + compteurs masqués en Déconnecté ; `PagePresenter` pur : zéro redessin sur Instantané identique ou battement, frame jamais redémarrée hors changement d'animation ; 29 tests natifs (61 au total) ; validation matérielle HITL en attente. (PR #164.)
+
 ## 0.1.38
 
 - #158 Totem firmware : squelette PlatformIO `firmware/` (ESP32-C6 Waveshare AMOLED 2.16", pioarduino 55.03.38-1 épinglé, libs épinglées, env `native`) — serveur entrant `POST /snapshot` avec `X-Island-Token` (401 → 413 → 400 → 204, corps lu en flux plafonné à 2 Ko, comparaison de token à durée constante), décodage de l'Instantané v1 contre `firmware/contract/`, Déconnecté au démarrage / après 30 s / sur `shutdown` (fraîcheur `millis()` verrouillée), config Wi-Fi/token sur LittleFS (absente ou token vide → message, serveur non démarré), mDNS `island-totem.local`, écran texte anglais (état, compteurs, IP) ; 32 tests natifs ; installation PlatformIO via `uv` sur Python 3.13 ; validation matérielle HITL en attente. (PR #163.)
