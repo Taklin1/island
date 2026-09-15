@@ -17,13 +17,11 @@
 
 #include "halo_layer.h"
 #include "mascot_widget.h"
+#include "pager.h"
 
 namespace ui {
 
 namespace {
-
-constexpr int32_t kContentPad = kHaloInset + 8;
-constexpr int32_t kRowGap = 8;
 
 lv_obj_t* gLink = nullptr;     // CONNECTED / DISCONNECTED
 lv_obj_t* gMascot = nullptr;   // pixel-art bot
@@ -62,23 +60,17 @@ void setColor(lv_obj_t* label, lv_color_t color) {
 
 }  // namespace
 
-void pageStateBegin() {
-    lv_obj_t* screen = lv_screen_active();
-    lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
-    lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_pad_all(screen, kContentPad, 0);
-    lv_obj_set_flex_flow(screen, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(screen, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(screen, kRowGap, 0);
+lv_obj_t* pageStateBegin() {
+    // A page of its own (#160): the pager flips it with the Quotas page.
+    lv_obj_t* page = pageCreate();
 
     const int32_t line20 = lv_font_montserrat_20.line_height;
     const int32_t line28 = lv_font_montserrat_28.line_height;
-    gLink = addLabel(screen, &lv_font_montserrat_20, line20);
-    gMascot = mascotCreate(screen);
-    gCounts = addLabel(screen, &lv_font_montserrat_28, 2 * line28 + 2);
-    gAddress = addLabel(screen, &lv_font_montserrat_20, line20);
-    gMdns = addLabel(screen, &lv_font_montserrat_20, line20);
+    gLink = addLabel(page, &lv_font_montserrat_20, line20);
+    gMascot = mascotCreate(page);
+    gCounts = addLabel(page, &lv_font_montserrat_28, 2 * line28 + 2);
+    gAddress = addLabel(page, &lv_font_montserrat_20, line20);
+    gMdns = addLabel(page, &lv_font_montserrat_20, line20);
 
     setText(gLink, "DISCONNECTED");
     setColor(gLink, kDimColor);
@@ -87,6 +79,7 @@ void pageStateBegin() {
     haloBegin();
     // Déconnecté until the first accepted Instantané.
     pageStateUpdate(totem::makeViewModel(false, nullptr), lv_tick_get(), "");
+    return page;
 }
 
 void pageStateShowConfigProblem(const char* problem) {

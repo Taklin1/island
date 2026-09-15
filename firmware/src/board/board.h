@@ -28,10 +28,30 @@ constexpr int kLcdD3 = 4;
 constexpr int16_t kLcdWidth = 480;
 constexpr int16_t kLcdHeight = 480;
 
+// CST9220/CST9217 capacitive touch controller (issue #160), on the I2C bus
+// above. Pins and address: the board's published pinout, recorded in the
+// #160 grilling.
+constexpr uint8_t kTouchAddress = 0x5A;
+constexpr int kTouchInt = 5;
+constexpr int kTouchRst = 11;
+
 /// Powers the panel and brings the CO5300 up, in the mandatory order
 /// (a wrong order gives a black screen with no error). Returns the panel,
 /// or nullptr when the PMU or the panel did not answer.
 Arduino_GFX* begin();
+
+/// Writes the CO5300 brightness register (0x51, normal mode). No-op before
+/// the panel is up. Never the PWR button: a 6-8 s press powers the AXP2101 off.
+void setBrightness(uint8_t value);
+
+/// Brings the touch controller up (after `begin()`, which starts the I2C
+/// bus). Returns false when it does not answer: the Totem then simply
+/// stays on its state page.
+bool touchBegin();
+
+/// Samples the controller: true while a finger is down, with its position
+/// in display coordinates.
+bool touchRead(int32_t& x, int32_t& y);
 
 /// Starts LVGL on `panel` in partial rendering (no full framebuffer: the
 /// board has no PSRAM). Returns false when the draw buffers cannot be had.

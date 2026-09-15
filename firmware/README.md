@@ -2,15 +2,15 @@
 
 Firmware du **Totem** (voir `CONTEXT.md` § Totem) : un Waveshare ESP32-C6-Touch-AMOLED-2.16 qui affiche l'**Instantané** poussé par le **Relais** de l'app island sur le réseau local. Afficheur pur : un serveur HTTP entrant, aucune requête sortante, aucun canal vers l'app (ADR-0013, ADR-0014). Le firmware vit dans ce repo pour que le contrat évolue dans une seule PR des deux côtés (ADR-0015).
 
-Cette version affiche la **page état** (#159) : la mascotte pixel-art animée selon l'état agrégé, les compteurs par état, Connecté / Déconnecté, l'adresse IP et `island-totem.local`, entourés du **Halo**. La page Quotas et le tactile arrivent avec #160.
+Cette version affiche deux pages entourées du **Halo** : la **page état** (#159 : la mascotte pixel-art animée selon l'état agrégé, les compteurs par état, Connecté / Déconnecté, l'adresse IP et `island-totem.local`) et la **page Quotas** (#160 : jauges 5 h et 7 d, compte à rebours du reset 5 h). Le toucher bascule d'une page à l'autre et règle la luminosité, rien d'autre.
 
 ## Organisation
 
 | Chemin | Rôle |
 | --- | --- |
 | `platformio.ini` | env `totem_c6` (la carte) et env `native` (tests sur le Mac) |
-| `lib/totem_core/` | logique pure, sans `Arduino.h` : décodage de l'Instantané, token, fraîcheur (Déconnecté), `config.json`, ordre de validation de `POST /snapshot`, modèle de vue de la page état, Halo, palette grise |
-| `src/` | code carte : alimentation et écran, LVGL, Wi-Fi + mDNS, serveur HTTP, page état (`src/ui/`) |
+| `lib/totem_core/` | logique pure, sans `Arduino.h` : décodage de l'Instantané, token, fraîcheur (Déconnecté), `config.json`, ordre de validation de `POST /snapshot`, modèle de vue de la page état, Halo, palette grise, vue des Quotas et compte à rebours, gestes, niveaux de luminosité |
+| `src/` | code carte : alimentation et écran, tactile, luminosité (NVS), LVGL, Wi-Fi + mDNS, serveur HTTP, pages état et Quotas et leur bascule (`src/ui/`) |
 | `src/generated/totem_sprites.h` | Sprites exportés par `scripts/export_totem_sprites.py` (généré, versionné, ne pas éditer à la main) |
 | `test/` | tests natifs de `lib/totem_core/` |
 | `contract/` | fixtures du contrat, partagées avec `swift test` (lecture seule, #156) |
@@ -117,7 +117,7 @@ De haut en bas, dans une colonne centrée qui reste à l'intérieur du Halo : `C
 
 **Déconnecté.** Mascotte endormie en gris (échange de palette en luminance, Rec. 601), Halo éteint, compteurs masqués.
 
-Le toucher n'acquitte rien (ADR-0013) ; cette version n'en fait rien du tout.
+Le toucher n'acquitte rien (ADR-0013) : il ne sert qu'à la navigation locale (voir « Toucher et luminosité »).
 
 ### Régénérer les Sprites
 
@@ -145,6 +145,51 @@ Avec l'app island qui pousse vers le Totem :
 9. App quittée (ou 30 s sans Instantané) : `DISCONNECTED`, mascotte grise, Halo éteint.
 10. `config.json` invalide : écran `CONFIG ERROR` inchangé, sans mascotte ni Halo.
 
+## Page Quotas
+
+De haut en bas : `QUOTAS` (`QUOTAS - DISCONNECTED` en Déconnecté), la jauge `5 h` avec son pourcentage, le compte à rebours du reset 5 h, puis la jauge `7 d`. Les règles sont celles de l'Étendu (`Sources/IslandUI/QuotaGauges.swift`, recopiées dans `lib/totem_core/quota_view.h` avec la mention « MUST mirror ») :
+
+- **Pourcentage** : l'entier envoyé par le Mac (même arrondi que les jauges du Mac), affiché tel quel (`24%`, `105%`).
+- **Remplissage** borné à 0…100 %.
+- **Couleur** : vert sous 40 %, jaune sous 75 %, rouge au-delà (SwiftUI `Color.green` / `.yellow` / `.red`, apparence sombre : `#30D158` / `#FFD60A` / `#FF453A`). Le Mac seuille son pourcentage non arrondi : pile à une frontière (39,6 % affiché `40%`), le Totem, qui ne reçoit que l'entier, peut avoir un cran de couleur d'écart.
+- **Fenêtre absente** : pas de jauge. **Aucune fenêtre** (le cas le plus fréquent, le tee statusline est désactivé par défaut) : `no quotas`, jamais `0%`.
+
+**Compte à rebours** (cyan `#64D2FF`, icône « rafraîchir » de la police LVGL, le `↺` du Mac n'y existant pas) : le Totem n'a ni heure, ni NTP, ni fuseau. À chaque Instantané accepté, il part de `resetsAt - sentAt`, puis décompte avec `millis()`, sans jamais passer sous 0. Minutes arrondies au supérieur, pour se lire comme l'heure de reset du Mac moins l'heure affichée : `13m`, `2h 05m`, `now` à 0 (`1d 03h` au-delà de 24 h). Pas de compte à rebours si le Mac n'envoie pas de `resetsAt` pour la fenêtre 5 h.
+
+**Déconnecté** : les dernières jauges et le compte à rebours reçus en Connecté restent affichés, estompés et figés, y compris après l'Instantané de fermeture de l'app (qui ne porte pas de Quotas). Au démarrage, `no quotas` estompé. Pas de % de contexte (hors contrat v1) ni d'atténuation nocturne (le Totem n'a pas l'heure).
+
+## Toucher et luminosité
+
+Tactile CST9220/CST9217 en I2C `0x5A` (SDA 8, SCL 7, INT 5, RST 11), via SensorLib `TouchDrvCST92xx` à version épinglée. Axes réglés pour le MADCTL `0x30` de l'écran : X/Y inversés et X en miroir (constat sur cette carte, relevé au grilling de #160) ; à recalibrer si l'orientation change. Les deux pages sont créées au démarrage et basculées par `LV_OBJ_FLAG_HIDDEN`, jamais créées ni détruites au toucher ; le Halo reste au-dessus des deux.
+
+| Geste | Effet |
+| --- | --- |
+| **tap** (moins de 600 ms) | bascule page état ↔ page Quotas, au relâcher |
+| **appui long** (600 ms) | un cran de luminosité, pendant l'appui, une seule fois par appui |
+| aucun toucher pendant 30 s sur la page Quotas | retour automatique à la page état (chaque toucher réarme le délai) |
+
+Un relâcher de moins de 60 ms (rapport perdu par le contrôleur) ne coupe pas l'appui en deux. Réglages : `lib/totem_core/gesture.h`.
+
+**Luminosité** : 4 niveaux cycliques du registre `0x51` du CO5300 (`48`, `112`, `176`, `240` ; plancher non nul pour ne jamais simuler un objet éteint ; le plus lumineux par défaut), le plus lumineux repassant au plus faible. Le niveau est gardé en NVS (`Preferences`, espace `totem`, clé `brightness`), écrit à chaque appui long et relu au démarrage. Réglages : `lib/totem_core/brightness_levels.h`. Le bouton PWR n'est jamais utilisé (un appui de 6-8 s éteint l'AXP2101).
+
+**Aucun autre effet** : pas d'acquittement, aucune requête sortante, rien vers l'app. Sans contrôleur tactile détecté (`[touch] CST92xx not found` au moniteur série), le Totem reste sur la page état ; avec un `config.json` en erreur, le tactile n'est pas démarré et l'écran `CONFIG ERROR` reste affiché.
+
+### Checklist visuelle et tactile (carte branchée)
+
+Avec l'app island qui pousse vers le Totem, l'Étendu ouvert sur le Mac à côté :
+
+1. Tap au centre : page Quotas ; nouveau tap : page état. Dix taps d'affilée : dix bascules, aucune ratée ni doublée.
+2. Axes : toucher les quatre coins, moniteur série ouvert (`pio device monitor -e totem_c6`). `[touch] down at x,y` donne ≈ `0,0` en haut à gauche, ≈ `479,0` en haut à droite, ≈ `0,479` en bas à gauche, ≈ `479,479` en bas à droite (écran tenu comme l'affichage).
+3. Page Quotas, tee statusline activé : pourcentages et couleurs identiques aux jauges de l'Étendu au même instant ; `5 h` et `7 d`.
+4. Compte à rebours cohérent avec le `↺ HH:MM` de l'Étendu (heure de reset moins l'heure du Mac, à la minute près), qui diminue d'une minute par minute.
+5. Tee statusline désactivé (défaut) : `no quotas`, jamais `0%`.
+6. Halo visible sur la page Quotas (orange / vert selon l'état), avec la même respiration.
+7. Rester sur la page Quotas sans toucher : retour à la page état après ~30 s. Toucher à 20 s : le délai repart.
+8. Appui long : un seul cran de luminosité par appui, même doigt posé plusieurs secondes ; quatre appuis longs font le tour ; le plus faible reste lisible.
+9. Débrancher/rebrancher (ou redémarrer) : la luminosité choisie est conservée.
+10. App quittée : page Quotas `QUOTAS - DISCONNECTED`, jauges et compte à rebours estompés et figés ; page état comme avant (mascotte grise, Halo éteint).
+11. Aucun effet côté Mac pendant les gestes (Sessions, Acquittement, Liseré inchangés).
+
 ## Si le Totem reste Déconnecté
 
 - `curl` depuis le Mac échoue : même réseau 2,4 GHz ? isolation client ou réseau invité ? IP changée (relire l'écran) ?
@@ -152,4 +197,4 @@ Avec l'app island qui pousse vers le Totem :
 
 ## Matériel
 
-SoC RISC-V mono-cœur, 512 Ko de SRAM, **aucune PSRAM**, 16 Mo de flash, Wi-Fi 2,4 GHz. Écran AMOLED 480×480 CO5300 en QSPI, PMU AXP2101 (I2C 0x34) qui alimente l'écran. LVGL rend en mode partiel dans deux petits buffers en RAM interne, jamais dans un framebuffer complet. Le code carte est écrit à partir des faits matériels (broches, registres, ordre d'init) relevés sur cette carte lors du grilling de #158 ; aucun code tiers n'est copié.
+SoC RISC-V mono-cœur, 512 Ko de SRAM, **aucune PSRAM**, 16 Mo de flash, Wi-Fi 2,4 GHz. Écran AMOLED 480×480 CO5300 en QSPI, tactile CST9220/CST9217 (I2C 0x5A), PMU AXP2101 (I2C 0x34) qui alimente l'écran. LVGL rend en mode partiel dans deux petits buffers en RAM interne, jamais dans un framebuffer complet. Le code carte est écrit à partir des faits matériels (broches, registres, ordre d'init) relevés sur cette carte lors du grilling de #158 ; aucun code tiers n'est copié.

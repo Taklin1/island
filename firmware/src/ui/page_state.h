@@ -2,6 +2,8 @@
 // address, with the Halo around the screen. Replaces #158's text screen.
 #pragma once
 
+#include <lvgl.h>
+
 #include <cstdint>
 
 #include "view_model.h"
@@ -9,7 +11,8 @@
 namespace ui {
 
 /// Builds the page and the Halo once; afterwards only changes are drawn.
-void pageStateBegin();
+/// Returns the page for the pager (#160).
+lv_obj_t* pageStateBegin();
 
 /// Replaces the page with a configuration problem (server not started):
 /// no mascot, no Halo.

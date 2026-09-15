@@ -10,6 +10,7 @@ namespace board {
 namespace {
 
 XPowersAXP2101 pmu;
+Arduino_CO5300* gPanel = nullptr;  // set once the CO5300 is up
 
 constexpr uint16_t kPanelRailMillivolts = 3300;
 constexpr uint32_t kResetPulseMs = 100;
@@ -58,14 +59,20 @@ Arduino_GFX* begin() {
 
     static Arduino_DataBus* bus =
         new Arduino_ESP32QSPI(kLcdCs, kLcdSclk, kLcdD0, kLcdD1, kLcdD2, kLcdD3);
-    static Arduino_GFX* panel =
+    static Arduino_CO5300* panel =
         new Arduino_CO5300(bus, GFX_NOT_DEFINED, 0, kLcdWidth, kLcdHeight, 0, 0, 0, 0);
     if (!panel->begin()) {
         Serial.println("[board] CO5300 panel init failed");
         return nullptr;
     }
     writePanelRegisters(bus);
+    gPanel = panel;
     return panel;
+}
+
+void setBrightness(uint8_t value) {
+    // Arduino_CO5300::setBrightness writes register 0x51 (normal mode).
+    if (gPanel != nullptr) gPanel->setBrightness(value);
 }
 
 }  // namespace board
