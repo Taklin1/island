@@ -4,6 +4,7 @@ import ClaudeCodeAdapter
 import IslandFocus
 import IslandGlow
 import IslandInstaller
+import IslandRelay
 import IslandServer
 import IslandStore
 import IslandUI
@@ -32,6 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: IslandController?
     private var glow: GlowController?
     private var focusAcknowledger: TerminalFocusAcknowledger?
+    /// Relais (issue #157, ADR-0014): pushes the Instantané to the Totem. Nil
+    /// until the local server started — a failed start terminates with nothing
+    /// to flush (the Totem's ~30 s Déconnecté covers it).
+    private var relay: TotemRelay?
+    /// A clean termination is already flushing the Relais (repeat Quit).
+    private var isTerminating = false
     private var statusItem: NSStatusItem?
     /// Global mouse monitor for the top-edge Reveal gesture (issue #53). A thin
     /// shell: it reads the cursor and screen and delegates the decision to the
@@ -229,11 +236,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let focusAcknowledger = TerminalFocusAcknowledger(store: store)
                 self.focusAcknowledger = focusAcknowledger
                 focusAcknowledger.start()
+
+                // Relais (issue #157, ADR-0014): fed by the store and the
+                // QuotaStore, never by the hooks. OFF by default: no POST
+                // leaves the Mac until enabled from the menu.
+                let relay = TotemRelay(store: store, quotaStore: quotaStore)
+                self.relay = relay
+                relay.setTarget(settings.relay.target)
+                relay.setEnabled(settings.relay.isEnabled)
+                relay.start()
+                print("island: totem relay \(settings.relay.isEnabled ? "on" : "off")"
+                    + " (\(Self.relayTargetTrace(settings.relay)))")
             } catch {
                 fputs("island: failed to start local server: \(error)\n", stderr)
                 NSApplication.shared.terminate(nil)
             }
         }
+    }
+
+    // MARK: - Clean termination (issue #157)
+
+    /// A clean quit (menu, Apple Event) sends the Totem its empty Instantané
+    /// before exiting, so it never keeps a stale Halo: termination is deferred
+    /// while the Relais flushes (bounded ~1 s), then confirmed. Nothing to
+    /// flush — Relais off and idle, or never started — quits at once, as
+    /// before. Unclean exits (pkill by install.sh, crash) send nothing: the
+    /// Totem's Déconnecté covers them.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let relay, relay.needsShutdown || isTerminating else { return .terminateNow }
+        guard !isTerminating else { return .terminateLater }
+        isTerminating = true
+        print("island: terminating — flushing the totem relay")
+        Task { @MainActor in
+            await relay.shutdown()
+            print("island: totem relay flushed, terminating")
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     // MARK: - Hooks lifecycle (issue #6)
@@ -621,6 +660,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         answer.state = settings.answerFromIslandEnabled ? .on : .off
         menu.addItem(answer)
 
+        // Relais (issue #157): opt-in push of the Instantané to the Totem.
+        let totemRelay = NSMenuItem(
+            title: "Totem relay",
+            action: #selector(toggleTotemRelay(_:)), keyEquivalent: "")
+        totemRelay.target = self
+        totemRelay.state = settings.relay.isEnabled ? .on : .off
+        menu.addItem(totemRelay)
+
+        let totemSettings = NSMenuItem(
+            title: "Totem address & token…",
+            action: #selector(editTotemAddressAndToken), keyEquivalent: "")
+        totemSettings.target = self
+        menu.addItem(totemSettings)
+
         menu.addItem(.separator())
 
         let login = NSMenuItem(
@@ -699,6 +752,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onboarding.guideToSystemSettings()
             settings.answerFromIslandOnboardingPrompted = true
         }
+    }
+
+    /// Relais on/off (issue #157). Turning it on without a usable address and
+    /// token opens the settings dialog first; turning it off sends the Totem
+    /// one last empty Instantané, then nothing.
+    @objc private func toggleTotemRelay(_ sender: NSMenuItem) {
+        settings.relay.isEnabled.toggle()
+        sender.state = settings.relay.isEnabled ? .on : .off
+        print("island: preference totemRelayEnabled=\(settings.relay.isEnabled)"
+            + " (\(Self.relayTargetTrace(settings.relay)))")
+        if settings.relay.isEnabled, settings.relay.target == nil {
+            editTotemAddressAndToken()
+        }
+        relay?.setEnabled(settings.relay.isEnabled)
+    }
+
+    /// Edits the Totem address and token in an alert with text fields. island
+    /// is an accessory app that is never activated: without an explicit
+    /// activation the frontmost app (the terminal) would keep the keyboard
+    /// and receive the token as typed. Activation is handed back afterwards.
+    @objc private func editTotemAddressAndToken() {
+        let previousApp = NSWorkspace.shared.frontmostApplication
+        let addressField = NSTextField(string: settings.relay.address ?? "")
+        addressField.placeholderString = "192.168.1.42 or island-totem.local"
+        let tokenField = NSTextField(string: settings.relay.token ?? "")
+        tokenField.placeholderString = "Token shown by the Totem"
+        for field in [addressField, tokenField] {
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.widthAnchor.constraint(equalToConstant: 240).isActive = true
+        }
+        let grid = NSGridView(views: [
+            [NSTextField(labelWithString: "Address"), addressField],
+            [NSTextField(labelWithString: "Token"), tokenField],
+        ])
+        grid.rowSpacing = 8
+        grid.frame = NSRect(origin: .zero, size: grid.fittingSize)
+
+        let alert = NSAlert()
+        alert.messageText = "Totem address & token"
+        alert.informativeText = "The Totem on your local network: its IP address or"
+            + " island-totem.local (optionally :port), and the token it shows."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.accessoryView = grid
+        alert.window.initialFirstResponder = addressField
+
+        NSApp.activate(ignoringOtherApps: true)
+        print("island: totem settings dialog opened (app active=\(NSApp.isActive))")
+        let response = alert.runModal()
+        defer { Self.handBackActivation(to: previousApp) }
+        guard response == .alertFirstButtonReturn else {
+            print("island: totem settings dialog cancelled")
+            return
+        }
+
+        let address = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = tokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard RelaySettings.endpoint(forAddress: address) != nil, !token.isEmpty else {
+            print("island: totem settings refused (unusable address or empty token)")
+            let refusal = NSAlert()
+            refusal.alertStyle = .warning
+            refusal.messageText = "Totem settings not saved"
+            refusal.informativeText = token.isEmpty
+                ? "The token cannot be empty."
+                : "\"\(address)\" is not a usable address. Use an IP address or a"
+                    + " name like island-totem.local, optionally with :port."
+            refusal.runModal()
+            return
+        }
+        settings.relay.address = address
+        settings.relay.token = token
+        print("island: totem settings saved (\(Self.relayTargetTrace(settings.relay)))")
+        relay?.setTarget(settings.relay.target)
+    }
+
+    /// Gives the keyboard back to the app that was frontmost before the
+    /// dialog (the terminal, typically).
+    private static func handBackActivation(to previousApp: NSRunningApplication?) {
+        guard let previousApp, previousApp != NSRunningApplication.current else { return }
+        NSApp.yieldActivation(to: previousApp)
+        previousApp.activate()
+    }
+
+    /// The push endpoint for traces — never the token.
+    private static func relayTargetTrace(_ relaySettings: RelaySettings) -> String {
+        relaySettings.target.map { "target \($0.endpoint.absoluteString)" }
+            ?? "no target: address or token missing"
     }
 
     @objc private func toggleLoginItem(_ sender: NSMenuItem) {
