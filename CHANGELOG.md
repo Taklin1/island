@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.36
+
+- #156 Totem : Instantané pur `TotemSnapshot` (contrat JSON v1 compact à clés triées : `state` agrégé par la Priorité d'état non acquittée, `counts` bruts, Quotas 5 h/7 j en pourcentage entier + reset epoch Unix optionnel, `sentAt`, `shutdown` ; ni contexte, ni halo, ni texte/identifiant de Session) figé par les fixtures `firmware/contract/` (golden octet pour octet + test négatif sentinelles) ; agrégat d'attention unique `SessionAttention` remonté dans IslandStore, Icône animée, Liseré et jauges Quotas y délèguent sans changement de comportement. (PR #161.)
+
 ## 0.1.35
 
 - #145 Pompe résiduelle 0.1.34 éteinte sur ses deux maillons : la promotion survol→Étendu depuis Masqué est gatée par le prédicat partagé de la Révélation par pression (`revealArmed && !recedeCooldownActive`, #130), et les hover-on de la fenêtre vendorée demi-écran sont hit-testés contre la frame réelle de la vue survolable (`HoverHitTest`, parasites du fondu rejetés) — l'oscillateur de la zone morte (bord haut, 230 < dx < 360, ~3 Hz, curseur immobile) est cassé, repli géométrique légitime et bandes 460/305 intouchés ; patch vendoré recensé ADR-0003, nuance moniteurs globaux/CGEvents synthétiques capitalisée dans `agentic-driving.md` ; FP geste réel : 1 seul `masqué`, 0 redéploiement sur 6 s en zone morte, validation visuelle Loic. (PR #146.)
