@@ -9,13 +9,16 @@
 #include "config.h"
 #include "net/net.h"
 #include "receiver.h"
-#include "ui/text_status.h"
+#include "ui/page_state.h"
+#include "view_model.h"
 
 namespace {
 
 constexpr const char* kConfigPath = "/config.json";
 constexpr size_t kMaxConfigBytes = 1024;
-constexpr uint32_t kUiRefreshMs = 250;
+// Fast enough for the mascot's pace (4 fps at most); LVGL is only touched on
+// a real change.
+constexpr uint32_t kUiRefreshMs = 50;
 
 bool gDisplayReady = false;
 bool gServing = false;
@@ -51,12 +54,12 @@ void setup() {
     Serial.begin(115200);
 
     gDisplayReady = board::displayBegin(board::begin());
-    if (gDisplayReady) ui::textStatusBegin();
+    if (gDisplayReady) ui::pageStateBegin();
 
     totem::TotemConfig config;
     if (const char* problem = loadConfig(config)) {
         Serial.printf("[config] %s: server not started\n", problem);
-        if (gDisplayReady) ui::textStatusShowConfigProblem(problem);
+        if (gDisplayReady) ui::pageStateShowConfigProblem(problem);
         return;
     }
 
@@ -78,7 +81,8 @@ void loop() {
 
         if (gDisplayReady && millis() - gLastUiMs >= kUiRefreshMs) {
             gLastUiMs = millis();
-            ui::textStatusUpdate(*gReceiver, gLastUiMs, net::wifiIp());
+            ui::pageStateUpdate(totem::viewModelFor(*gReceiver, gLastUiMs), gLastUiMs,
+                                net::wifiIp().c_str());
         }
     }
     board::displayLoop();

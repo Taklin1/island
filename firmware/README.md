@@ -2,15 +2,16 @@
 
 Firmware du **Totem** (voir `CONTEXT.md` § Totem) : un Waveshare ESP32-C6-Touch-AMOLED-2.16 qui affiche l'**Instantané** poussé par le **Relais** de l'app island sur le réseau local. Afficheur pur : un serveur HTTP entrant, aucune requête sortante, aucun canal vers l'app (ADR-0013, ADR-0014). Le firmware vit dans ce repo pour que le contrat évolue dans une seule PR des deux côtés (ADR-0015).
 
-Cette version affiche du texte brut : Connecté / Déconnecté, état agrégé, compteurs, adresse IP et `island-totem.local`. La mascotte et le Halo arrivent avec #159.
+Cette version affiche la **page état** (#159) : la mascotte pixel-art animée selon l'état agrégé, les compteurs par état, Connecté / Déconnecté, l'adresse IP et `island-totem.local`, entourés du **Halo**. La page Quotas et le tactile arrivent avec #160.
 
 ## Organisation
 
 | Chemin | Rôle |
 | --- | --- |
 | `platformio.ini` | env `totem_c6` (la carte) et env `native` (tests sur le Mac) |
-| `lib/totem_core/` | logique pure, sans `Arduino.h` : décodage de l'Instantané, token, fraîcheur (Déconnecté), `config.json`, ordre de validation de `POST /snapshot` |
-| `src/` | code carte : alimentation et écran, LVGL, Wi-Fi + mDNS, serveur HTTP, écran texte |
+| `lib/totem_core/` | logique pure, sans `Arduino.h` : décodage de l'Instantané, token, fraîcheur (Déconnecté), `config.json`, ordre de validation de `POST /snapshot`, modèle de vue de la page état, Halo, palette grise |
+| `src/` | code carte : alimentation et écran, LVGL, Wi-Fi + mDNS, serveur HTTP, page état (`src/ui/`) |
+| `src/generated/totem_sprites.h` | Sprites exportés par `scripts/export_totem_sprites.py` (généré, versionné, ne pas éditer à la main) |
 | `test/` | tests natifs de `lib/totem_core/` |
 | `contract/` | fixtures du contrat, partagées avec `swift test` (lecture seule, #156) |
 | `data/` | système de fichiers LittleFS envoyé sur la carte (`config.json`, non versionné) |
@@ -82,7 +83,7 @@ Au démarrage, l'écran affiche l'IP obtenue (`IP 192.168.x.y`) et `island-totem
 TOKEN=...   # le token de data/config.json
 curl -i -X POST http://island-totem.local/snapshot \
   -H "X-Island-Token: $TOKEN" -H "Content-Type: application/json" \
-  --data-binary @contract/snapshot-nominal.json      # 204, écran CONNECTED / done
+  --data-binary @contract/snapshot-nominal.json      # 204, CONNECTED, mascotte finished, Halo vert
 curl -i -X POST http://island-totem.local/snapshot \
   --data-binary @contract/snapshot-nominal.json      # 401, écran inchangé
 ```
@@ -99,6 +100,50 @@ curl -i -X POST http://island-totem.local/snapshot \
 **Déconnecté** : au démarrage jusqu'au premier Instantané accepté, après 30 s sans Instantané accepté, et immédiatement sur un Instantané `shutdown: true` (fermeture de l'app). Le prochain Instantané normal repasse Connecté. Une requête refusée ne rafraîchit jamais. En Déconnecté, l'écran n'affiche ni état ni compteurs périmés.
 
 Les libellés à l'écran sont en anglais, avec le lexique d'état d'ADR-0012 (`waiting`, `done`, `working`, `idle`) : `CONNECTED` / `DISCONNECTED`, `CONFIG ERROR`, `Wi-Fi: connecting...`. Ils restent en ASCII, seul jeu couvert par les polices Montserrat intégrées à LVGL.
+
+## Page état
+
+De haut en bas, dans une colonne centrée qui reste à l'intérieur du Halo : `CONNECTED` / `DISCONNECTED`, la mascotte (240×240), les compteurs (`waiting N   done N` / `working N   idle N`), `IP x.x.x.x` et `island-totem.local`. Chaque élément a une taille fixe : un texte qui change ne déplace jamais la mascotte.
+
+**Mascotte.** Ce sont les Sprites de l'app (`bot.png`), exportés en C : état agrégé `idle` → `sleeping`, `working` → `working`, `done` → `finished`, `waiting` → `question` (comme `SpriteAnimation.animation(for:)`). Chaque pixel 16×16 est dessiné en carré plein de 15×15 (rendu maison, sans mise à l'échelle d'image ni antialiasing) ; seule la zone de la mascotte est invalidée quand la frame change. Frames et fps sont ceux de `SpriteSheet.bot` (`Sources/IslandUI/Sprites.swift`), épinglés par `test_sprites`.
+
+**Compteurs.** Ce sont les compteurs **bruts** envoyés par le Mac : un `waiting 1` avec le Halo éteint est normal (Session en attente déjà acquittée sur le Mac). En Déconnecté, ils sont masqués (jamais de compteurs périmés).
+
+**Halo.** Orange si l'état agrégé est `waiting`, vert si `done`, éteint sinon et en Déconnecté. Il suit ce que le Mac envoie, quel que soit le réglage « Edge outline » du Mac, et ne s'éteint que par l'Acquittement fait sur le Mac. Couleurs : celles du Liseré (SwiftUI `Color.orange` / `Color.green` de `GlowWindow.swift`, apparence sombre : `#FF9F0A` / `#30D158`), pas les teintes des Sprites qui restent sur la mascotte. Il est dessiné sur `lv_layer_top()` (au-dessus de toute page) en lueur intérieure : 4 bordures imbriquées de 6 px, d'opacité décroissante (230, 140, 80, 35), coins arrondis de 24 px. Pas d'ombre plein écran (son cache ne tient pas en SRAM).
+
+**Respiration.** Pour ménager l'AMOLED, l'intensité du Halo oscille lentement entre 60 % et 100 % sur une période de 8,192 s (courbe adoucie), sur sa propre horloge (timer LVGL de 100 ms) : les Instantanés ne la pilotent pas. Elle ne repeint que quatre bandes le long des bords, jamais la mascotte ni les compteurs. Période, profondeur, épaisseur, arrondi et couleurs sont des constantes à régler sur matériel (`lib/totem_core/halo.h`, `src/ui/halo_layer.h`).
+
+**Pas de clignotement.** La page garde le dernier modèle de vue appliqué et ne touche LVGL que sur une vraie différence (`PagePresenter`) : un Instantané identique ou un battement ne redessine rien, et l'index de frame de la mascotte ne repart jamais tant que l'animation ne change pas (y compris au passage Connecté → Déconnecté en dormant).
+
+**Déconnecté.** Mascotte endormie en gris (échange de palette en luminance, Rec. 601), Halo éteint, compteurs masqués.
+
+Le toucher n'acquitte rien (ADR-0013) ; cette version n'en fait rien du tout.
+
+### Régénérer les Sprites
+
+Après un changement de `bot.png` ou de `SpriteSheet.bot` côté app :
+
+```sh
+python3 scripts/export_totem_sprites.py          # réécrit src/generated/totem_sprites.h
+python3 scripts/export_totem_sprites.py --check  # échoue si le header n'est pas à jour
+```
+
+Le script lit `bot.png` et `Sprites.swift` sans rien réécrire côté app (ne relancez pas `scripts/generate_sprites.py` pour ça). Sa sortie est déterministe. La ligne `error` n'est pas exportée.
+
+### Checklist visuelle (carte branchée)
+
+Avec l'app island qui pousse vers le Totem :
+
+1. Au démarrage : `DISCONNECTED`, mascotte endormie grise, pas de Halo, pas de compteurs.
+2. Une Session qui travaille : mascotte `working` (lignes de code qui défilent), Halo éteint, `working 1`.
+3. Une Session qui attend une réponse : mascotte `question`, Halo orange au même instant que le Liseré du Mac (même avec « Edge outline » désactivé sur le Mac).
+4. Une Session terminée non acquittée : mascotte `finished` (coche), Halo vert.
+5. Acquittement sur le Mac : le Halo s'éteint dès le push suivant ; le compteur `waiting`/`done` reste (compteur brut).
+6. Les quatre animations sont nettes (pixels carrés, sans flou) et à la bonne cadence.
+7. Aucun clignotement pendant plusieurs battements (une minute sans changement d'état) : ni mascotte qui repart à sa première frame, ni texte qui scintille.
+8. Respiration du Halo lente et discrète, sans à-coups ; épaisseur, arrondi des coins et couleurs acceptables sur la dalle.
+9. App quittée (ou 30 s sans Instantané) : `DISCONNECTED`, mascotte grise, Halo éteint.
+10. `config.json` invalide : écran `CONFIG ERROR` inchangé, sans mascotte ni Halo.
 
 ## Si le Totem reste Déconnecté
 
