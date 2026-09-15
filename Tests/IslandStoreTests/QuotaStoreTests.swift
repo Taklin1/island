@@ -73,6 +73,14 @@ struct QuotaStoreTests {
         #expect(store.contextBySession["quota-sess-2"] == 55.5)
     }
 
+    @Test("A window's percentage rounds to the nearest whole percent, half away from zero")
+    func roundedUsedPercentage() {
+        #expect(RateLimitWindow(usedPercentage: 23.5).roundedUsedPercentage == 24)
+        #expect(RateLimitWindow(usedPercentage: 41.2).roundedUsedPercentage == 41)
+        #expect(RateLimitWindow(usedPercentage: 0.4).roundedUsedPercentage == 0)
+        #expect(RateLimitWindow(usedPercentage: 99.6).roundedUsedPercentage == 100)
+    }
+
     @Test("A payload that is not a JSON object is rejected")
     func malformedPayloadIsRejected() {
         #expect(QuotaUpdate(statuslineJSON: Data("not json".utf8)) == nil)
