@@ -3,6 +3,10 @@
 Toutes les versions notables d'island. Format : une ligne dense par version, la plus récente en haut.
 Seul l'orchestrateur d'epic écrit ici (bump `0.x.y` + une ligne par issue mergée lors de la réconciliation) ; les agents d'implémentation n'y touchent jamais.
 
+## 0.1.40
+
+- #160 Totem firmware : page Quotas (jauges 5 h / 7 d miroir de `QuotaGauges.swift` : bornes 0…100, seuils 40/75, jauge absente si fenêtre absente, `no quotas` jamais 0 %) avec compte à rebours du reset 5 h (`resetsAt - sentAt` décompté par `millis()`, borné à `now`, sans heure locale ni NTP), estompée et figée sur les dernières Quotas en Déconnecté ; tactile CST92xx (SensorLib 0.4.1 épinglée) en indev LVGL piloté par une machine de gestes pure : tap = bascule page état ↔ Quotas (pages créées une fois, Halo toujours visible), appui long = un cran parmi 4 niveaux de luminosité (registre 0x51, plancher 48, persistés NVS), retour auto à la page état après 30 s ; 37 tests natifs (98 au total) ; validation matérielle HITL en attente. (PR #165.)
+
 ## 0.1.39
 
 - #159 Totem firmware : page état LVGL — mascotte pixel-art ×15 sans antialiasing (Sprites de l'app exportés par `scripts/export_totem_sprites.py` vers `firmware/src/generated/totem_sprites.h`, table frames/fps miroir de `Sprites.swift` épinglée par test, `--check` déterministe), 4 animations selon l'état agrégé, compteurs bruts en anglais, Halo orange/vert sur `lv_layer_top()` en lueur intérieure (couleurs du Liseré) avec respiration lente 60-100 % anti-brûlure, mascotte grise + Halo éteint + compteurs masqués en Déconnecté ; `PagePresenter` pur : zéro redessin sur Instantané identique ou battement, frame jamais redémarrée hors changement d'animation ; 29 tests natifs (61 au total) ; validation matérielle HITL en attente. (PR #164.)
